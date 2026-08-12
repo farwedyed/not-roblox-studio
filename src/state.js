@@ -8,6 +8,7 @@ export const state = {
     selectedObjects: [],
     selectedObject: null,
     isLightingSelected: false,
+    isRestoring: true, // Protection lock during page startup!
     currentTool: 'select',
     
     lightingSettings: {
@@ -48,24 +49,36 @@ export function serializeObject(obj, scene) {
         }
     });
 
+    let objectType = "Group";
+    if (obj.name === "Baseplate") objectType = "Baseplate";
+    else if (obj.userData && obj.userData.isPrimitive) objectType = "Primitive";
+    else if (obj.userData && obj.userData.modelType) objectType = "GLTFModel";
+    else if (obj.isMesh) objectType = "Primitive";
+
+    let hexColor = "#a3a2a5";
+    if (obj.isMesh && obj.material && obj.material.color) {
+        hexColor = "#" + obj.material.color.getHexString();
+    }
+
     return {
         name: obj.name,
         parentName: realParent,
+        objectType: objectType,
         modelType: obj.userData ? (obj.userData.modelType || null) : null,
         materialName: obj.userData ? (obj.userData.materialName || "Plastic") : "Plastic",
         textureName: mapTexName,
         textureRepeat: { u: repeatU, v: repeatV },
         textureOffset: { u: offsetU, v: offsetV },
-        isPrimitive: obj.userData ? !!obj.userData.isPrimitive : false,
-        primitiveType: obj.userData ? (obj.userData.primitiveType || null) : null,
+        isPrimitive: obj.userData ? !!obj.userData.isPrimitive : (objectType === "Primitive"),
+        primitiveType: obj.userData ? (obj.userData.primitiveType || 'Block') : 'Block',
         isBaseplate: obj.name === "Baseplate",
-        isGroup: obj.isGroup && !isInsideTempPivot && !(obj.userData && obj.userData.modelType),
+        isGroup: obj.isGroup && !isInsideTempPivot && objectType === "Group",
         locked: obj.userData ? !!obj.userData.locked : false,
         anchored: obj.userData ? !!obj.userData.anchored : false,
         canCollide: obj.userData ? !!obj.userData.canCollide : false,
         castShadow: !!obj.castShadow,
         receiveShadow: !!obj.receiveShadow,
-        color: (obj.isMesh && obj.material && obj.material.color) ? "#" + obj.material.color.getHexString() : "#a3a2a5",
+        color: hexColor,
         transparency: (obj.isMesh && obj.material) ? obj.material.opacity : 1,
         roughness: (obj.isMesh && obj.material) ? obj.material.roughness : 0.35,
         position: { x: worldPos.x, y: worldPos.y, z: worldPos.z },

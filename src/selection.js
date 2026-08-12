@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { state } from './state.js';
-import { scene, camera, transformControls, selectionBox } from './scene.js';
+import { scene, camera, transformControls, selectionBox, updateRobloxScaleGizmoPositions } from './scene.js';
 import { updateExplorerUI, renderPropertiesPanel, renderLightingProperties } from './ui.js';
 
 export let multiPivotGroup = null;
@@ -38,7 +38,6 @@ export function setupMultiPivot(objectsArray) {
 
 export function selectMultipleObjects(objectsArray) {
     state.isLightingSelected = false;
-    // Allow selecting ALL objects (including locked objects like Baseplate)!
     state.selectedObjects = objectsArray.filter(o => o !== null && o !== undefined);
     state.selectedObject = state.selectedObjects[state.selectedObjects.length - 1] || null;
 
@@ -50,15 +49,13 @@ export function selectMultipleObjects(objectsArray) {
             selectionBox.visible = true;
         }
 
-        // Attach Gizmo ONLY if the object is NOT locked!
-        if (state.selectedObject && !state.selectedObject.userData.locked && state.currentTool !== 'select') {
+        if (state.selectedObject && !state.selectedObject.userData.locked && state.currentTool !== 'select' && state.currentTool !== 'scale') {
             transformControls.setMode(state.currentTool);
             transformControls.attach(state.selectedObject);
         } else {
             transformControls.detach();
         }
     } else if (state.selectedObjects.length > 1) {
-        // Filter out locked objects from multi-gizmo movement
         const unlocked = state.selectedObjects.filter(o => !o.userData.locked);
         if (unlocked.length > 1) {
             setupMultiPivot(unlocked);
@@ -66,7 +63,7 @@ export function selectMultipleObjects(objectsArray) {
                 selectionBox.setFromObject(multiPivotGroup);
                 selectionBox.visible = true;
             }
-            if (state.currentTool !== 'select') {
+            if (state.currentTool !== 'select' && state.currentTool !== 'scale') {
                 transformControls.setMode(state.currentTool);
                 transformControls.attach(multiPivotGroup);
             } else {
@@ -77,7 +74,7 @@ export function selectMultipleObjects(objectsArray) {
                 selectionBox.setFromObject(unlocked[0]);
                 selectionBox.visible = true;
             }
-            if (state.currentTool !== 'select') {
+            if (state.currentTool !== 'select' && state.currentTool !== 'scale') {
                 transformControls.setMode(state.currentTool);
                 transformControls.attach(unlocked[0]);
             } else {
@@ -91,6 +88,9 @@ export function selectMultipleObjects(objectsArray) {
         if (selectionBox) selectionBox.visible = false;
         transformControls.detach();
     }
+
+    const activeTarget = state.selectedObjects.length > 1 ? multiPivotGroup : state.selectedObject;
+    updateRobloxScaleGizmoPositions(activeTarget);
 
     updateExplorerUI();
     renderPropertiesPanel();
@@ -119,6 +119,7 @@ export function selectLightingService() {
     state.isLightingSelected = true;
     if (selectionBox) selectionBox.visible = false;
     if (transformControls) transformControls.detach();
+    updateRobloxScaleGizmoPositions(null);
     updateExplorerUI();
     renderLightingProperties();
 }

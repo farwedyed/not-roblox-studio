@@ -185,7 +185,6 @@ export function processImportedFiles(files) {
 
         reader.onload = function(e) {
             const arrayBuffer = e.target.result;
-            // CRITICAL FIX: Save image texture bytes to IndexedDB so it persists on reload!
             saveTextureToDB(file.name, arrayBuffer, file.type);
 
             const blob = new Blob([arrayBuffer], { type: file.type });
@@ -227,7 +226,6 @@ export function handleFileSelect(event) {
 
 export function spawnModel(modelName) {
     if (!state.loadedModels[modelName]) return;
-    saveState();
     const model = state.loadedModels[modelName].clone();
     model.name = modelName + "_" + (state.placedObjects.length + 1);
     model.userData = { locked: false, anchored: true, canCollide: true, modelType: modelName };
@@ -244,10 +242,10 @@ export function spawnModel(modelName) {
 
     selectMultipleObjects([model]);
     updateExplorer();
+    saveState();
 }
 
 export function insertPrimitive(type) {
-    saveState();
     let geo, mat = new THREE.MeshStandardMaterial({ color: 0xa3a2a5, roughness: 0.5 });
     if (type === 'Block') geo = new THREE.BoxGeometry(2, 2, 2);
     if (type === 'Sphere') geo = new THREE.SphereGeometry(1.5, 32, 32);
@@ -266,11 +264,11 @@ export function insertPrimitive(type) {
 
     selectMultipleObjects([mesh]);
     updateExplorer();
+    saveState();
 }
 
 export function applyMaterialToSelected(matName) {
     if (state.selectedObjects.length === 0) return;
-    saveState();
 
     state.selectedObjects.forEach(obj => {
         obj.userData.materialName = matName;
@@ -287,6 +285,7 @@ export function applyMaterialToSelected(matName) {
             }
         });
     });
+    saveState();
     showStatus("Set Material: " + matName);
 }
 

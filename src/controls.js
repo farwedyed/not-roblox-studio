@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { state } from './state.js';
-import { scene, camera, renderer, transformControls, selectionBox } from './scene.js';
+import { scene, camera, renderer, transformControls, selectionBox, robloxScaleGizmoGroup, updateRobloxScaleGizmoPositions } from './scene.js';
 import { selectObject, selectMultipleObjects, raycastSelect, getObjectsInSelectionBox, multiPivotGroup, clearMultiPivot } from './selection.js';
 import { saveState, updatePropertiesUIValues, showContextMenu, hideContextMenu, showStatus, undo, redo } from './ui.js';
 import { insertPrimitive, handleFileSelect, processImportedFiles } from './loaders.js';
@@ -18,9 +18,15 @@ let yaw = 0, pitch = 0;
 let isMarqueeSelecting = false;
 let marqueeStartX = 0, marqueeStartY = 0;
 let isMeshDragging = false;
-let scaleStartPos = new THREE.Vector3();
-let scaleStartScale = new THREE.Vector3();
-let scaleStartMinY = 0;
+
+// Roblox Scale Gizmo Handle State
+let activeRobloxScaleHandle = null;
+let scaleStartObjPos = new THREE.Vector3();
+let scaleStartObjScale = new THREE.Vector3();
+let scaleStartSize = new THREE.Vector3();
+let scaleDragPlane = new THREE.Plane();
+let scaleStartHit = new THREE.Vector3();
+let hoveredScaleHandle = null;
 
 export function setTool(mode) {
     state.currentTool = mode;
@@ -29,23 +35,31 @@ export function setTool(mode) {
         document.getElementById('tool-' + mode).classList.add('btn-active');
     }
 
-    if (mode === 'select') {
+    const targetObj = state.selectedObjects.length > 1 ? multiPivotGroup : state.selectedObject;
+
+    if (mode === 'scale') {
         if (transformControls) transformControls.detach();
+        updateRobloxScaleGizmoPositions(targetObj);
+        showStatus("Scale Tool Equipped");
+    } else if (mode === 'select') {
+        if (transformControls) transformControls.detach();
+        updateRobloxScaleGizmoPositions(null);
         showStatus("Select Tool Equipped");
-    } else if (state.selectedObjects.length > 0) {
-        const target = state.selectedObjects.length > 1 ? multiPivotGroup : state.selectedObject;
-        if (target) {
-            transformControls.setMode(mode);
-            transformControls.attach(target);
-            showStatus(mode.toUpperCase() + " Tool Equipped");
-        }
+    } else if (targetObj && !targetObj.userData?.locked) {
+        updateRobloxScaleGizmoPositions(null);
+        transformControls.setMode(mode);
+        transformControls.attach(targetObj);
+        showStatus(mode.toUpperCase() + " Tool Equipped");
     }
 }
 
 export function updateSnapSettings() {
     if (!transformControls) return;
-    const moveVal = parseFloat(document.getElementById('snap-move-select').value);
-    const rotVal = parseFloat(document.getElementById('snap-rotate-select').value);
+    const moveInput = document.getElementById('snap-move-input');
+    const rotInput = document.getElementById('snap-rotate-input');
+
+    const moveVal = moveInput ? parseFloat(moveInput.value) : 1;
+    const rotVal = rotInput ? parseFloat(rotInput.value) : 15;
 
     transformControls.setTranslationSnap(moveVal > 0 ? moveVal : null);
     transformControls.setRotationSnap(rotVal > 0 ? THREE.MathUtils.degToRad(rotVal) : null);
@@ -54,7 +68,6 @@ export function updateSnapSettings() {
 
 export function snapSelectedToGround() {
     if (state.selectedObjects.length === 0) return;
-    saveState();
 
     state.selectedObjects.forEach(obj => {
         const box = new THREE.Box3().setFromObject(obj);
@@ -65,6 +78,9 @@ export function snapSelectedToGround() {
 
     updatePropertiesUIValues();
     if (selectionBox) selectionBox.update();
+    const targetObj = state.selectedObjects.length > 1 ? multiPivotGroup : state.selectedObject;
+    updateRobloxScaleGizmoPositions(targetObj);
+    saveState();
     showStatus("Dropped selected to Ground");
 }
 
@@ -72,6 +88,7 @@ export function toggleLockSelected() {
     if (!state.selectedObject) return;
     state.selectedObject.userData.locked = !state.selectedObject.userData.locked;
     selectObject(state.selectedObject);
+    saveState();
     showStatus(state.selectedObject.name + (state.selectedObject.userData.locked ? " Locked" : " Unlocked"));
 }
 
@@ -97,10 +114,10 @@ export function focusCamera() {
 
 export function deleteSelected() {
     if (state.selectedObjects.length === 0) return;
-    saveState();
     transformControls.detach();
     if (selectionBox) selectionBox.visible = false;
     clearMultiPivot();
+    updateRobloxScaleGizmoPositions(null);
 
     state.selectedObjects.forEach(obj => {
         scene.remove(obj);
@@ -109,12 +126,12 @@ export function deleteSelected() {
 
     state.selectedObjects = [];
     state.selectedObject = null;
+    saveState();
     import('./ui.js').then(m => { m.updateExplorer(); m.renderPropertiesPanel(); });
 }
 
 export function duplicateSelected() {
     if (state.selectedObjects.length === 0) return;
-    saveState();
 
     const newSelection = [];
     state.selectedObjects.forEach(obj => {
@@ -128,6 +145,7 @@ export function duplicateSelected() {
     });
 
     selectMultipleObjects(newSelection);
+    saveState();
     import('./ui.js').then(m => m.updateExplorer());
     showStatus("Duplicated Selection");
 }
@@ -135,7 +153,6 @@ export function duplicateSelected() {
 export function groupSelected() {
     if (state.selectedObjects.length === 0) return;
 
-    saveState();
     const modelGroup = new THREE.Group();
     modelGroup.name = "Model_" + (state.placedObjects.length + 1);
     modelGroup.userData = { locked: false, isUserGroup: true };
@@ -150,6 +167,7 @@ export function groupSelected() {
 
     state.placedObjects.push(modelGroup);
     selectMultipleObjects([modelGroup]);
+    saveState();
     import('./ui.js').then(m => m.updateExplorer());
     showStatus("Grouped Models");
 }
@@ -157,7 +175,6 @@ export function groupSelected() {
 export function ungroupSelected() {
     if (!state.selectedObject || !state.selectedObject.isGroup) return;
 
-    saveState();
     while (state.selectedObject.children.length > 0) {
         const child = state.selectedObject.children[0];
         scene.add(child);
@@ -168,11 +185,11 @@ export function ungroupSelected() {
     state.placedObjects = state.placedObjects.filter(o => o !== state.selectedObject);
     selectMultipleObjects([]);
 
+    saveState();
     import('./ui.js').then(m => { m.updateExplorer(); m.renderPropertiesPanel(); });
     showStatus("Ungrouped Model");
 }
 
-// Exported WASD Camera Flight Movement
 export function updateCamera() {
     if (!isRightMouseDown) return;
     const speed = keys['shift'] ? 0.08 : 0.35;
@@ -194,42 +211,6 @@ export function setupControlListeners() {
     const dragOverlay = document.getElementById('drag-overlay');
     const selectionMarquee = document.getElementById('selection-marquee');
 
-    transformControls.addEventListener('dragging-changed', (event) => {
-        if (event.value === true) {
-            saveState();
-            if (state.selectedObject) {
-                scaleStartPos.copy(state.selectedObject.position);
-                scaleStartScale.copy(state.selectedObject.scale);
-                const box = new THREE.Box3().setFromObject(state.selectedObject);
-                scaleStartMinY = box.min.y;
-            }
-            transformReadout.style.display = 'block';
-        } else {
-            transformReadout.style.display = 'none';
-        }
-    });
-
-    transformControls.addEventListener('change', () => {
-        const targetObj = (state.selectedObjects.length > 1 && multiPivotGroup) ? multiPivotGroup : state.selectedObject;
-        if (!targetObj || !transformControls.dragging) return;
-
-        const mode = transformControls.getMode();
-
-        if (mode === 'scale') {
-            transformReadout.innerText = `🔍 Size: X: ${targetObj.scale.x.toFixed(1)}x | Y: ${targetObj.scale.y.toFixed(1)}x | Z: ${targetObj.scale.z.toFixed(1)}x`;
-        } else if (mode === 'translate') {
-            transformReadout.innerText = `📍 Pos: X: ${targetObj.position.x.toFixed(1)} | Y: ${targetObj.position.y.toFixed(1)} | Z: ${targetObj.position.z.toFixed(1)} Studs`;
-        } else if (mode === 'rotate') {
-            const rotX = Math.round(THREE.MathUtils.radToDeg(targetObj.rotation.x));
-            const rotY = Math.round(THREE.MathUtils.radToDeg(targetObj.rotation.y));
-            const rotZ = Math.round(THREE.MathUtils.radToDeg(targetObj.rotation.z));
-            transformReadout.innerText = `🔄 Angle: X: ${rotX}° | Y: ${rotY}° | Z: ${rotZ}°`;
-        }
-
-        updatePropertiesUIValues();
-        if (selectionBox) selectionBox.update();
-    });
-
     document.addEventListener('contextmenu', e => e.preventDefault(), false);
     window.addEventListener('click', hideContextMenu);
 
@@ -247,13 +228,13 @@ export function setupControlListeners() {
         for (let k in keys) keys[k] = false;
         isRightMouseDown = false;
         isMarqueeSelecting = false;
+        activeRobloxScaleHandle = null;
         if (selectionMarquee) selectionMarquee.style.display = 'none';
         if (document.pointerLockElement) document.exitPointerLock();
         document.getElementById('crosshair').style.opacity = '0';
     });
 
     renderer.domElement.addEventListener('mousedown', (e) => {
-        // Automatically unfocus any text inputs in Properties panel so WASD keys work instantly!
         if (document.activeElement && document.activeElement !== document.body) {
             document.activeElement.blur();
         }
@@ -275,15 +256,41 @@ export function setupControlListeners() {
                 -((e.clientY - rect.top) / rect.height) * 2 + 1
             );
 
+            // 1. Check if user clicked a Roblox 6-Sphere Scale Handle
+            if (state.currentTool === 'scale' && robloxScaleGizmoGroup && robloxScaleGizmoGroup.visible) {
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(mouse, camera);
+
+                const handleHits = raycaster.intersectObjects(robloxScaleGizmoGroup.children);
+                if (handleHits.length > 0) {
+                    const hitHandle = handleHits[0].object;
+                    activeRobloxScaleHandle = hitHandle.userData.axis;
+
+                    const targetObj = (state.selectedObjects.length > 1 && multiPivotGroup) ? multiPivotGroup : state.selectedObject;
+                    if (targetObj) {
+                        scaleStartObjPos.copy(targetObj.position);
+                        scaleStartObjScale.copy(targetObj.scale);
+                        const box = new THREE.Box3().setFromObject(targetObj);
+                        box.getSize(scaleStartSize);
+
+                        const camDir = new THREE.Vector3();
+                        camera.getWorldDirection(camDir).negate();
+                        scaleDragPlane.setFromNormalAndCoplanarPoint(camDir, handleHits[0].point);
+                        scaleStartHit.copy(handleHits[0].point);
+                    }
+                    return;
+                }
+            }
+
+            // 2. Otherwise raycast selected scene objects
             const raycaster = new THREE.Raycaster();
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(state.placedObjects, true);
 
             if (intersects.length > 0) {
                 raycastSelect(e);
-                if (state.currentTool === 'select' && state.selectedObject && !state.selectedObject.userData.locked) {
+                if (state.selectedObject && !state.selectedObject.userData.locked && state.selectedObject.name !== "Baseplate") {
                     isMeshDragging = true;
-                    saveState();
                 }
             } else if (state.currentTool === 'select') {
                 isMarqueeSelecting = true;
@@ -299,6 +306,30 @@ export function setupControlListeners() {
     });
 
     window.addEventListener('mousemove', (e) => {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+            ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            -((e.clientY - rect.top) / rect.height) * 2 + 1
+        );
+
+        if (state.currentTool === 'scale' && robloxScaleGizmoGroup && robloxScaleGizmoGroup.visible && !isRightMouseDown && !activeRobloxScaleHandle) {
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+            const handleHits = raycaster.intersectObjects(robloxScaleGizmoGroup.children);
+
+            if (handleHits.length > 0) {
+                const hitMesh = handleHits[0].object;
+                if (hoveredScaleHandle && hoveredScaleHandle !== hitMesh) {
+                    hoveredScaleHandle.scale.set(1, 1, 1);
+                }
+                hoveredScaleHandle = hitMesh;
+                hoveredScaleHandle.scale.set(1.4, 1.4, 1.4);
+            } else if (hoveredScaleHandle) {
+                hoveredScaleHandle.scale.set(1, 1, 1);
+                hoveredScaleHandle = null;
+            }
+        }
+
         if (isRightMouseDown) {
             const dx = document.pointerLockElement ? e.movementX : (e.clientX - lastMouseX);
             const dy = document.pointerLockElement ? e.movementY : (e.clientY - lastMouseY);
@@ -311,6 +342,91 @@ export function setupControlListeners() {
                 pitch -= dy * 0.0025;
                 pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
                 camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+            }
+        } else if (activeRobloxScaleHandle) {
+            const targetObj = (state.selectedObjects.length > 1 && multiPivotGroup) ? multiPivotGroup : state.selectedObject;
+            if (targetObj) {
+                const dragRay = new THREE.Raycaster();
+                dragRay.setFromCamera(mouse, camera);
+
+                const currentHit = new THREE.Vector3();
+                if (dragRay.ray.intersectPlane(scaleDragPlane, currentHit)) {
+                    const moveSnap = parseFloat(document.getElementById('snap-move-input')?.value || 1);
+                    const deltaVec = currentHit.clone().sub(scaleStartHit);
+
+                    const isShift = keys['shift'] || e.shiftKey; // Shift Key for Proportional Scaling!
+
+                    let deltaVal = 0;
+                    let mainAxis = 'X';
+
+                    if (activeRobloxScaleHandle === 'PX') { deltaVal = deltaVec.x; mainAxis = 'X'; }
+                    else if (activeRobloxScaleHandle === 'NX') { deltaVal = -deltaVec.x; mainAxis = 'X'; }
+                    else if (activeRobloxScaleHandle === 'PY') { deltaVal = deltaVec.y; mainAxis = 'Y'; }
+                    else if (activeRobloxScaleHandle === 'NY') { deltaVal = -deltaVec.y; mainAxis = 'Y'; }
+                    else if (activeRobloxScaleHandle === 'PZ') { deltaVal = deltaVec.z; mainAxis = 'Z'; }
+                    else if (activeRobloxScaleHandle === 'NZ') { deltaVal = -deltaVec.z; mainAxis = 'Z'; }
+
+                    let newSizeX = scaleStartSize.x;
+                    let newSizeY = scaleStartSize.y;
+                    let newSizeZ = scaleStartSize.z;
+
+                    let posOffsetX = 0, posYOffset = 0, posOffsetZ = 0;
+
+                    if (isShift) {
+                        // Shift Key: Proportional Uniform Scale across ALL 3 axes!
+                        const baseSize = scaleStartSize[mainAxis.toLowerCase()] || 1;
+                        const scaleFactor = Math.max(0.1, (baseSize + deltaVal) / baseSize);
+
+                        newSizeX = Math.max(0.2, scaleStartSize.x * scaleFactor);
+                        newSizeY = Math.max(0.2, scaleStartSize.y * scaleFactor);
+                        newSizeZ = Math.max(0.2, scaleStartSize.z * scaleFactor);
+
+                        const signMultiplier = activeRobloxScaleHandle.includes('N') ? -1 : 1;
+                        posOffsetX = (newSizeX - scaleStartSize.x) * 0.5 * (activeRobloxScaleHandle.includes('X') ? signMultiplier : 0);
+                        posYOffset = (newSizeY - scaleStartSize.y) * 0.5 * (activeRobloxScaleHandle.includes('Y') ? signMultiplier : 0);
+                        posOffsetZ = (newSizeZ - scaleStartSize.z) * 0.5 * (activeRobloxScaleHandle.includes('Z') ? signMultiplier : 0);
+                    } else {
+                        // Single-Axis Non-Uniform Stretch
+                        if (mainAxis === 'X') {
+                            newSizeX = Math.max(0.2, scaleStartSize.x + deltaVal);
+                            if (moveSnap > 0) newSizeX = Math.round(newSizeX / moveSnap) * moveSnap;
+                            posOffsetX = (newSizeX - scaleStartSize.x) * 0.5 * (activeRobloxScaleHandle === 'NX' ? -1 : 1);
+                        } else if (mainAxis === 'Y') {
+                            newSizeY = Math.max(0.2, scaleStartSize.y + deltaVal);
+                            if (moveSnap > 0) newSizeY = Math.round(newSizeY / moveSnap) * moveSnap;
+                            posYOffset = (newSizeY - scaleStartSize.y) * 0.5 * (activeRobloxScaleHandle === 'NY' ? -1 : 1);
+                        } else if (mainAxis === 'Z') {
+                            newSizeZ = Math.max(0.2, scaleStartSize.z + deltaVal);
+                            if (moveSnap > 0) newSizeZ = Math.round(newSizeZ / moveSnap) * moveSnap;
+                            posOffsetZ = (newSizeZ - scaleStartSize.z) * 0.5 * (activeRobloxScaleHandle === 'NZ' ? -1 : 1);
+                        }
+                    }
+
+                    const ratioX = newSizeX / scaleStartSize.x;
+                    const ratioY = newSizeY / scaleStartSize.y;
+                    const ratioZ = newSizeZ / scaleStartSize.z;
+
+                    targetObj.scale.set(
+                        scaleStartObjScale.x * ratioX,
+                        scaleStartObjScale.y * ratioY,
+                        scaleStartObjScale.z * ratioZ
+                    );
+
+                    targetObj.position.set(
+                        scaleStartObjPos.x + posOffsetX,
+                        scaleStartObjPos.y + posYOffset,
+                        scaleStartObjPos.z + posOffsetZ
+                    );
+
+                    updateRobloxScaleGizmoPositions(targetObj);
+                    updatePropertiesUIValues();
+                    if (selectionBox) selectionBox.update();
+
+                    if (transformReadout) {
+                        transformReadout.style.display = 'block';
+                        transformReadout.innerText = `📏 Size: ${newSizeX.toFixed(1)} x ${newSizeY.toFixed(1)} x ${newSizeZ.toFixed(1)} Studs [${isShift ? 'Proportional' : activeRobloxScaleHandle}]`;
+                    }
+                }
             }
         } else if (isMarqueeSelecting) {
             const currentX = e.clientX;
@@ -328,19 +444,13 @@ export function setupControlListeners() {
         } else if (isMeshDragging && (state.selectedObject || multiPivotGroup)) {
             const targetToDrag = (state.selectedObjects.length > 1 && multiPivotGroup) ? multiPivotGroup : state.selectedObject;
             if (targetToDrag && !targetToDrag.userData?.locked && targetToDrag.name !== "Baseplate") {
-                const rect = renderer.domElement.getBoundingClientRect();
-                const mouse = new THREE.Vector2(
-                    ((e.clientX - rect.left) / rect.width) * 2 - 1,
-                    -((e.clientY - rect.top) / rect.height) * 2 + 1
-                );
-
                 const dragRay = new THREE.Raycaster();
                 dragRay.setFromCamera(mouse, camera);
 
                 const targets = state.placedObjects.filter(o => !state.selectedObjects.includes(o) && o !== targetToDrag);
                 const intersects = dragRay.intersectObjects(targets, true);
 
-                const moveVal = parseFloat(document.getElementById('snap-move-select').value) || 1;
+                const moveVal = parseFloat(document.getElementById('snap-move-input')?.value || 1);
 
                 if (intersects.length > 0) {
                     const hit = intersects[0];
@@ -385,6 +495,13 @@ export function setupControlListeners() {
 
     window.addEventListener('mouseup', (e) => {
         if (e.button === 0) {
+            const wasScaling = (activeRobloxScaleHandle !== null);
+            const wasDragging = isMeshDragging;
+
+            if (activeRobloxScaleHandle) {
+                activeRobloxScaleHandle = null;
+                if (transformReadout) transformReadout.style.display = 'none';
+            }
             if (isMarqueeSelecting) {
                 isMarqueeSelecting = false;
                 selectionMarquee.style.display = 'none';
@@ -416,6 +533,11 @@ export function setupControlListeners() {
                 }
             }
             isMeshDragging = false;
+
+            // Save state when scaling or dragging is successfully committed
+            if (wasScaling || wasDragging) {
+                saveState();
+            }
         } else if (e.button === 2) {
             isRightMouseDown = false;
             for (let k in keys) keys[k] = false;
@@ -425,13 +547,19 @@ export function setupControlListeners() {
             const holdDuration = Date.now() - rMouseDownTime;
             if (holdDuration < 220 && rTotalMovement < 10) {
                 raycastSelect(e);
-                showContextMenu(rMouseX, rMouseY);
+                showContextMenu(e.clientX, e.clientY);
             }
         }
     });
 
     window.addEventListener('keydown', (e) => {
         if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
+        // Prevent standard repeat triggers on held keydown for Undo/Redo commands
+        if (e.repeat && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y')) {
+            e.preventDefault();
+            return;
+        }
 
         keys[e.key.toLowerCase()] = true;
         if (e.key === 'Shift') keys['shift'] = true;
@@ -466,4 +594,6 @@ export function setupControlListeners() {
 
     document.getElementById('file-input-folder').addEventListener('change', handleFileSelect);
     document.getElementById('file-input-files').addEventListener('change', handleFileSelect);
+    document.getElementById('snap-move-input').addEventListener('input', updateSnapSettings);
+    document.getElementById('snap-rotate-input').addEventListener('input', updateSnapSettings);
 }

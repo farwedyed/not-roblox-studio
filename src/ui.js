@@ -1,14 +1,20 @@
 import * as THREE from 'three';
 import { state, serializeObject } from './state.js';
-import { scene, transformControls, selectionBox, updateLighting } from './scene.js';
+import { scene, transformControls, selectionBox, updateLighting, updateRobloxScaleGizmoPositions } from './scene.js';
 import { selectObject, selectMultipleObjects, selectLightingService, clearMultiPivot } from './selection.js';
-import { applyMaterialToSelected, setTextureRepeatScale, processImportedFiles } from './loaders.js';
+import { applyMaterialToSelected, setTextureRepeatScale } from './loaders.js';
 import { saveTextureToDB } from './db.js';
 import { materialTextureLibrary } from './materials.js';
 
 const textureLoader = new THREE.TextureLoader();
 
+function bindEvent(id, eventName, callback) {
+    const el = document.getElementById(id);
+    if (el) el[eventName] = callback;
+}
+
 export function autoSaveMap() {
+    if (state.isRestoring) return; // Blocked if clearing or restoring!
     if (!state.placedObjects || state.placedObjects.length === 0) return;
     try {
         const exportData = {
@@ -28,16 +34,26 @@ export function checkAndRestoreAutoSave() {
                 restoreState(JSON.stringify(data.objects));
                 if (data.lighting) Object.assign(state.lightingSettings, data.lighting);
                 updateLighting();
-                showStatus("Restored Auto-Save!");
+                showStatus(`Restored Auto-Save (${data.objects.length} Objects)`);
             }
-        } catch(e) {}
+        } catch(e) {
+            console.error("Auto-save restore error:", e);
+        }
     }
+    state.isRestoring = false; // Restoration complete, enable normal auto-saving!
 }
 
 export function saveState() {
+    if (state.isRestoring) return;
     if (!state.placedObjects) return;
     const snapshot = state.placedObjects.map(o => serializeObject(o, scene));
-    state.undoStack.push(JSON.stringify(snapshot));
+    const jsonStr = JSON.stringify(snapshot);
+
+    if (state.undoStack.length > 0 && state.undoStack[state.undoStack.length - 1] === jsonStr) {
+        return;
+    }
+
+    state.undoStack.push(jsonStr);
     state.redoStack.length = 0;
     autoSaveMap();
 }
@@ -64,6 +80,7 @@ export function restoreState(jsonState) {
 
     if (transformControls) transformControls.detach();
     if (selectionBox) selectionBox.visible = false;
+    updateRobloxScaleGizmoPositions(null);
     state.selectedObjects = [];
     state.selectedObject = null;
 
@@ -83,24 +100,29 @@ export function restoreState(jsonState) {
 
     data.forEach(item => {
         let obj;
-        if (item.name === "Baseplate" || item.isBaseplate) {
+        const safeColor = (item.color && typeof item.color === 'string') ? parseInt(item.color.replace('#', '0x')) : 0xa3a2a5;
+
+        if (item.objectType === "Baseplate" || item.name === "Baseplate" || item.isBaseplate) {
             const geo = new THREE.BoxGeometry(100, 1, 100);
             const mat = new THREE.MeshStandardMaterial({ 
-                color: parseInt(item.color.replace('#', '0x')), 
-                roughness: item.roughness, 
+                color: safeColor, 
+                map: materialTextureLibrary["Studs"],
+                roughness: item.roughness || 0.35, 
                 metalness: 0.1 
             });
+            if (mat.map) mat.map.repeat.set(25, 25);
             obj = new THREE.Mesh(geo, mat);
             obj.userData = { locked: true, anchored: true, canCollide: true, materialName: "Studs" };
-        } else if (item.modelType && state.loadedModels[item.modelType]) {
+        } else if ((item.objectType === "GLTFModel" || item.modelType) && item.modelType && state.loadedModels[item.modelType]) {
             obj = state.loadedModels[item.modelType].clone();
             obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
             obj.userData = { locked: !!item.locked, anchored: !!item.anchored, canCollide: !!item.canCollide, modelType: item.modelType };
-        } else if (item.isPrimitive) {
-            let geo = item.primitiveType === 'Sphere' ? new THREE.SphereGeometry(1.5, 32, 32) : new THREE.BoxGeometry(2, 2, 2);
-            const mat = new THREE.MeshStandardMaterial({ color: parseInt(item.color.replace('#', '0x')), roughness: item.roughness });
+        } else if (item.objectType === "Primitive" || item.isPrimitive || item.primitiveType) {
+            const pType = item.primitiveType || 'Block';
+            let geo = pType === 'Sphere' ? new THREE.SphereGeometry(1.5, 32, 32) : new THREE.BoxGeometry(2, 2, 2);
+            const mat = new THREE.MeshStandardMaterial({ color: safeColor, roughness: item.roughness || 0.5 });
             obj = new THREE.Mesh(geo, mat);
-            obj.userData = { locked: !!item.locked, anchored: !!item.anchored, canCollide: !!item.canCollide, isPrimitive: true, primitiveType: item.primitiveType };
+            obj.userData = { locked: !!item.locked, anchored: !!item.anchored, canCollide: !!item.canCollide, isPrimitive: true, primitiveType: pType };
         } else {
             obj = new THREE.Group();
             obj.userData = { locked: !!item.locked, isUserGroup: true };
@@ -114,7 +136,6 @@ export function restoreState(jsonState) {
         obj.rotation.set(item.rotation.x, item.rotation.y, item.rotation.z);
         obj.scale.set(item.scale.x, item.scale.y, item.scale.z);
 
-        // Restore Custom Image Texture or Procedural Material
         let tex = null;
         if (item.textureName && state.loadedTextures[item.textureName]) {
             tex = state.loadedTextures[item.textureName].clone();
@@ -188,7 +209,16 @@ export function updateExplorer() {
         const item = document.createElement('div');
         const isSel = state.selectedObjects.includes(obj) || state.selectedObject === obj;
         item.className = `tree-item ${isSel ? 'selected' : ''}`;
-        item.innerHTML = `<span>${obj.userData.locked ? '🔒' : (obj.isGroup ? '📁' : '🔷')}</span> ${obj.name}`;
+
+        let icon = '🔷';
+        if (obj.userData && obj.userData.locked) icon = '🔒';
+        else if (obj.name === "Baseplate") icon = '🧱';
+        else if (obj.userData && obj.userData.isPrimitive) {
+            icon = obj.userData.primitiveType === 'Sphere' ? '⚪' : '🟩';
+        } else if (obj.userData && obj.userData.modelType) icon = '📦';
+        else if (obj.isGroup) icon = '📁';
+
+        item.innerHTML = `<span>${icon}</span> ${obj.name}`;
         
         item.onclick = (e) => selectObject(obj, e.shiftKey);
         item.oncontextmenu = (e) => {
@@ -216,6 +246,8 @@ export function showStatus(text) {
 
 export function renderLightingProperties() {
     const propertiesContent = document.getElementById('properties-content');
+    if (!propertiesContent) return;
+
     propertiesContent.innerHTML = `
         <div class="prop-section">Lighting Service</div>
         <div class="prop-row">
@@ -242,34 +274,51 @@ export function renderLightingProperties() {
         </div>
     `;
 
-    const updateTime = (val) => {
-        state.lightingSettings.clockTime = parseFloat(val);
-        document.getElementById('light-time').value = state.lightingSettings.clockTime;
+    bindEvent('light-time', 'onchange', (e) => {
+        state.lightingSettings.clockTime = parseFloat(e.target.value);
         document.getElementById('light-time-slider').value = state.lightingSettings.clockTime;
         updateLighting();
-    };
+        saveState();
+    });
 
-    document.getElementById('light-time').onchange = (e) => updateTime(e.target.value);
-    document.getElementById('light-time-slider').oninput = (e) => updateTime(e.target.value);
+    bindEvent('light-time-slider', 'oninput', (e) => {
+        state.lightingSettings.clockTime = parseFloat(e.target.value);
+        document.getElementById('light-time').value = state.lightingSettings.clockTime;
+        updateLighting();
+    });
+    
+    // Save state once user stops sliding the time slider
+    bindEvent('light-time-slider', 'onchange', () => {
+        saveState();
+    });
 
-    document.getElementById('light-brightness').oninput = (e) => {
+    bindEvent('light-brightness', 'oninput', (e) => {
         state.lightingSettings.brightness = parseFloat(e.target.value);
         updateLighting();
-    };
+    });
+    bindEvent('light-brightness', 'onchange', () => {
+        saveState();
+    });
 
-    document.getElementById('light-ambient').oninput = (e) => {
+    bindEvent('light-ambient', 'oninput', (e) => {
         state.lightingSettings.ambient = parseFloat(e.target.value);
         updateLighting();
-    };
+    });
+    bindEvent('light-ambient', 'onchange', () => {
+        saveState();
+    });
 
-    document.getElementById('light-shadows').onchange = (e) => {
+    bindEvent('light-shadows', 'onchange', (e) => {
         state.lightingSettings.shadows = e.target.checked;
         updateLighting();
-    };
+        saveState();
+    });
 }
 
 export function renderPropertiesPanel() {
     const propertiesContent = document.getElementById('properties-content');
+    if (!propertiesContent) return;
+
     if (state.isLightingSelected) {
         renderLightingProperties();
         return;
@@ -284,17 +333,16 @@ export function renderPropertiesPanel() {
     const colorHex = (isMesh && state.selectedObject.material && state.selectedObject.material.color) ? "#" + state.selectedObject.material.color.getHexString() : "#ffffff";
     const currentMatName = state.selectedObject.userData.materialName || "Plastic";
 
-    // Read Texture Mapping Properties
     let curTexName = state.selectedObject.userData.textureName || "None";
     let repeatU = 1, repeatV = 1;
-    let offsetU = 0, offsetV = 0;
+
+    const currentBox = new THREE.Box3().setFromObject(state.selectedObject);
+    const studsSize = currentBox.getSize(new THREE.Vector3());
 
     state.selectedObject.traverse(c => {
         if (c.isMesh && c.material && c.material.map) {
             repeatU = c.material.map.repeat.x;
             repeatV = c.material.map.repeat.y;
-            offsetU = c.material.map.offset.x;
-            offsetV = c.material.map.offset.y;
         }
     });
 
@@ -311,7 +359,7 @@ export function renderPropertiesPanel() {
             <input type="checkbox" id="prop-locked" ${state.selectedObject.userData.locked ? 'checked' : ''}>
         </div>
 
-        <div class="prop-section">Material & Texture ID</div>
+        <div class="prop-section">Material & Custom Texture</div>
         <div class="prop-row">
             <span class="prop-label">Material</span>
             <select class="prop-input" id="prop-material">
@@ -332,7 +380,7 @@ export function renderPropertiesPanel() {
             </select>
         </div>
         <div class="prop-row">
-            <span class="prop-label">Upload Texture</span>
+            <span class="prop-label">Custom Texture</span>
             <label for="prop-custom-tex-file" class="btn" style="padding:2px 6px; font-size:10px;">📷 Select Image</label>
             <input type="file" id="prop-custom-tex-file" class="file-input-hidden" accept="image/*">
         </div>
@@ -343,13 +391,6 @@ export function renderPropertiesPanel() {
             <div class="vector3-group">
                 <input id="prop-tile-u" type="number" step="0.5" value="${repeatU}">
                 <input id="prop-tile-v" type="number" step="0.5" value="${repeatV}">
-            </div>
-        </div>
-        <div class="prop-row">
-            <span class="prop-label">Offset U / V</span>
-            <div class="vector3-group">
-                <input id="prop-off-u" type="number" step="0.1" value="${offsetU}">
-                <input id="prop-off-v" type="number" step="0.1" value="${offsetV}">
             </div>
         </div>
 
@@ -386,6 +427,16 @@ export function renderPropertiesPanel() {
             <input type="range" id="prop-roughness" min="0" max="1" step="0.05" value="${state.selectedObject.material.roughness}">
         </div>` : ''}
 
+        <div class="prop-section">Size in Studs</div>
+        <div class="prop-row">
+            <span class="prop-label">Studs (W x H x D)</span>
+            <div class="vector3-group">
+                <input id="size-x" type="number" step="0.5" value="${studsSize.x.toFixed(1)}">
+                <input id="size-y" type="number" step="0.5" value="${studsSize.y.toFixed(1)}">
+                <input id="size-z" type="number" step="0.5" value="${studsSize.z.toFixed(1)}">
+            </div>
+        </div>
+
         <div class="prop-section">Transform</div>
         <div class="prop-row">
             <span class="prop-label">Position</span>
@@ -396,7 +447,7 @@ export function renderPropertiesPanel() {
             </div>
         </div>
         <div class="prop-row">
-            <span class="prop-label">Scale</span>
+            <span class="prop-label">Scale Factor</span>
             <div class="vector3-group">
                 <input id="scale-x" type="number" step="0.1" value="${state.selectedObject.scale.x.toFixed(1)}">
                 <input id="scale-y" type="number" step="0.1" value="${state.selectedObject.scale.y.toFixed(1)}">
@@ -405,36 +456,36 @@ export function renderPropertiesPanel() {
         </div>
     `;
 
-    document.getElementById('prop-name').onchange = (e) => {
-        saveState();
+    bindEvent('prop-name', 'onchange', (e) => {
         state.selectedObject.name = e.target.value;
         updateExplorer();
-    };
+        saveState();
+    });
 
-    document.getElementById('prop-material').onchange = (e) => {
+    bindEvent('prop-material', 'onchange', (e) => {
         applyMaterialToSelected(e.target.value);
-    };
+    });
 
-    document.getElementById('prop-texture-id').onchange = (e) => {
+    bindEvent('prop-texture-id', 'onchange', (e) => {
         const texName = e.target.value;
         if (texName === "None") {
-            saveState();
             state.selectedObjects.forEach(obj => {
                 obj.userData.textureName = null;
                 obj.traverse(c => { if (c.isMesh) c.material.map = null; c.material.needsUpdate = true; });
             });
-        } else if (state.loadedTextures[texName]) {
             saveState();
+        } else if (state.loadedTextures[texName]) {
             const tex = state.loadedTextures[texName].clone();
             tex.needsUpdate = true;
             state.selectedObjects.forEach(obj => {
                 obj.userData.textureName = texName;
                 obj.traverse(c => { if (c.isMesh) { c.material.map = tex; c.material.needsUpdate = true; } });
             });
+            saveState();
         }
-    };
+    });
 
-    document.getElementById('prop-custom-tex-file').onchange = (e) => {
+    bindEvent('prop-custom-tex-file', 'onchange', (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
@@ -451,7 +502,6 @@ export function renderPropertiesPanel() {
                 tex.wrapT = THREE.RepeatWrapping;
                 state.loadedTextures[file.name] = tex;
 
-                saveState();
                 state.selectedObjects.forEach(obj => {
                     obj.userData.textureName = file.name;
                     obj.traverse(c => {
@@ -461,84 +511,88 @@ export function renderPropertiesPanel() {
                         }
                     });
                 });
+                saveState();
                 renderPropertiesPanel();
                 showStatus("Applied & Saved Custom Texture!");
             });
         };
         reader.readAsArrayBuffer(file);
-    };
-
-    // UV StudsPerTile (Repeat)
-    ['prop-tile-u', 'prop-tile-v'].forEach((id, idx) => {
-        document.getElementById(id).onchange = () => {
-            saveState();
-            const uVal = parseFloat(document.getElementById('prop-tile-u').value) || 1;
-            const vVal = parseFloat(document.getElementById('prop-tile-v').value) || 1;
-
-            state.selectedObjects.forEach(obj => {
-                obj.traverse(c => {
-                    if (c.isMesh && c.material.map) {
-                        c.material.map.repeat.set(uVal, vVal);
-                        c.material.map.needsUpdate = true;
-                    }
-                });
-            });
-        };
     });
 
-    // UV Offset
-    ['prop-off-u', 'prop-off-v'].forEach((id, idx) => {
-        document.getElementById(id).onchange = () => {
-            saveState();
-            const uOff = parseFloat(document.getElementById('prop-off-u').value) || 0;
-            const vOff = parseFloat(document.getElementById('prop-off-v').value) || 0;
+    ['prop-tile-u', 'prop-tile-v'].forEach((id) => {
+        bindEvent(id, 'onchange', () => {
+            const uVal = parseFloat(document.getElementById('prop-tile-u')?.value || 1);
+            const vVal = parseFloat(document.getElementById('prop-tile-v')?.value || 1);
 
-            state.selectedObjects.forEach(obj => {
-                obj.traverse(c => {
-                    if (c.isMesh && c.material.map) {
-                        c.material.map.offset.set(uOff, vOff);
-                        c.material.map.needsUpdate = true;
-                    }
-                });
-            });
-        };
+            setTextureRepeatScale(uVal, vVal);
+            saveState();
+        });
     });
 
-    document.getElementById('prop-locked').onchange = (e) => {
+    ['size-x', 'size-y', 'size-z'].forEach((id, idx) => {
+        bindEvent(id, 'onchange', () => {
+            if (!state.selectedObject) return;
+            const axis = ['x', 'y', 'z'][idx];
+            const targetSize = parseFloat(document.getElementById(id).value) || 1;
+
+            const box = new THREE.Box3().setFromObject(state.selectedObject);
+            const curSize = box.getSize(new THREE.Vector3());
+            const curAxisLen = curSize[axis] || 1;
+
+            const ratio = targetSize / curAxisLen;
+            state.selectedObject.scale[axis] *= ratio;
+
+            if (selectionBox) selectionBox.update();
+            const targetObj = state.selectedObjects.length > 1 ? window.multiPivotGroup : state.selectedObject;
+            updateRobloxScaleGizmoPositions(targetObj);
+            updatePropertiesUIValues();
+            saveState();
+        });
+    });
+
+    bindEvent('prop-locked', 'onchange', (e) => {
         const val = e.target.checked;
         state.selectedObjects.forEach(o => o.userData.locked = val);
         selectObject(state.selectedObject);
-    };
+        saveState();
+    });
 
-    document.getElementById('prop-anchored').onchange = (e) => {
+    bindEvent('prop-anchored', 'onchange', (e) => {
         const val = e.target.checked;
         state.selectedObjects.forEach(o => o.userData.anchored = val);
-    };
+        saveState();
+    });
 
-    document.getElementById('prop-cancollide').onchange = (e) => {
+    bindEvent('prop-cancollide', 'onchange', (e) => {
         const val = e.target.checked;
         state.selectedObjects.forEach(o => o.userData.canCollide = val);
-    };
+        saveState();
+    });
 
-    document.getElementById('prop-castshadow').onchange = (e) => {
+    bindEvent('prop-castshadow', 'onchange', (e) => {
         const val = e.target.checked;
         state.selectedObjects.forEach(o => o.castShadow = val);
-    };
+        saveState();
+    });
 
-    document.getElementById('prop-receiveshadow').onchange = (e) => {
+    bindEvent('prop-receiveshadow', 'onchange', (e) => {
         const val = e.target.checked;
         state.selectedObjects.forEach(o => o.receiveShadow = val);
-    };
+        saveState();
+    });
 
     if (isMesh) {
-        document.getElementById('prop-color').oninput = (e) => {
+        bindEvent('prop-color', 'oninput', (e) => {
             const col = e.target.value;
             state.selectedObjects.forEach(o => {
                 o.traverse(c => { if (c.isMesh && c.material && c.material.color) c.material.color.set(col); });
             });
-        };
+        });
+        bindEvent('prop-color', 'onchange', () => {
+            saveState();
+        });
 
-        document.getElementById('prop-transparency').oninput = (e) => {
+        bindEvent('prop-transparency', 'oninput', (e) => {
             const alpha = 1 - parseFloat(e.target.value);
             state.selectedObjects.forEach(o => {
                 o.traverse(c => {
@@ -548,32 +602,42 @@ export function renderPropertiesPanel() {
                     }
                 });
             });
-        };
+        });
+        bindEvent('prop-transparency', 'onchange', () => {
+            saveState();
+        });
 
-        document.getElementById('prop-roughness').oninput = (e) => {
+        bindEvent('prop-roughness', 'oninput', (e) => {
             const r = parseFloat(e.target.value);
             state.selectedObjects.forEach(o => {
                 o.traverse(c => { if (c.isMesh && c.material) c.material.roughness = r; });
             });
-        };
+        });
+        bindEvent('prop-roughness', 'onchange', () => {
+            saveState();
+        });
     }
 
     ['pos-x', 'pos-y', 'pos-z'].forEach((id, idx) => {
-        document.getElementById(id).onchange = () => {
-            saveState();
+        bindEvent(id, 'onchange', () => {
             const axis = ['x', 'y', 'z'][idx];
             state.selectedObject.position[axis] = parseFloat(document.getElementById(id).value);
             if (selectionBox) selectionBox.update();
-        };
+            const targetObj = state.selectedObjects.length > 1 ? window.multiPivotGroup : state.selectedObject;
+            updateRobloxScaleGizmoPositions(targetObj);
+            saveState();
+        });
     });
 
     ['scale-x', 'scale-y', 'scale-z'].forEach((id, idx) => {
-        document.getElementById(id).onchange = () => {
-            saveState();
+        bindEvent(id, 'onchange', () => {
             const axis = ['x', 'y', 'z'][idx];
             state.selectedObject.scale[axis] = parseFloat(document.getElementById(id).value);
             if (selectionBox) selectionBox.update();
-        };
+            const targetObj = state.selectedObjects.length > 1 ? window.multiPivotGroup : state.selectedObject;
+            updateRobloxScaleGizmoPositions(targetObj);
+            saveState();
+        });
     });
 }
 
@@ -587,6 +651,15 @@ export function updatePropertiesUIValues() {
         document.getElementById('scale-x').value = state.selectedObject.scale.x.toFixed(1);
         document.getElementById('scale-y').value = state.selectedObject.scale.y.toFixed(1);
         document.getElementById('scale-z').value = state.selectedObject.scale.z.toFixed(1);
+
+        const currentBox = new THREE.Box3().setFromObject(state.selectedObject);
+        const studsSize = currentBox.getSize(new THREE.Vector3());
+
+        if (document.getElementById('size-x')) {
+            document.getElementById('size-x').value = studsSize.x.toFixed(1);
+            document.getElementById('size-y').value = studsSize.y.toFixed(1);
+            document.getElementById('size-z').value = studsSize.z.toFixed(1);
+        }
     }
 }
 

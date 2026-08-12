@@ -6,7 +6,6 @@
     <title>Roblox Studio Web Map Editor</title>
     <link rel="stylesheet" href="style.css">
 
-    <!-- Importmap for Three.js ES6 Modules -->
     <script type="importmap">
       {
         "imports": {
@@ -43,23 +42,14 @@
 
         <div class="divider"></div>
 
+        <!-- Custom Snap Inputs -->
         <span class="snap-label">Move:</span>
-        <select id="snap-move-select" class="snap-select">
-            <option value="1" selected>1 Stud</option>
-            <option value="0.5">0.5 Studs</option>
-            <option value="2">2 Studs</option>
-            <option value="4">4 Studs</option>
-            <option value="0">Off</option>
-        </select>
+        <input type="number" id="snap-move-input" class="snap-input-num" value="1" step="0.1" min="0">
+        <span class="snap-label">Studs</span>
 
         <span class="snap-label">Rotate:</span>
-        <select id="snap-rotate-select" class="snap-select">
-            <option value="15" selected>15°</option>
-            <option value="45">45°</option>
-            <option value="90">90°</option>
-            <option value="5">5°</option>
-            <option value="0">Off</option>
-        </select>
+        <input type="number" id="snap-rotate-input" class="snap-input-num" value="15" step="1" min="0">
+        <span class="snap-label">°</span>
 
         <button class="btn" id="btn-drop-ground">⬇️ Drop to Ground</button>
 
@@ -138,7 +128,6 @@
 
     </div>
 
-    <!-- Application Entry Point -->
     <script type="module" src="src/main.js"></script>
 </body>
 </html>

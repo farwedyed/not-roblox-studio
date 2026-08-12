@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { generateModelThumbnail, spawnModel } from './loaders.js';
-import { fileBlobMap } from './materials.js'; // Imported fileBlobMap!
+import { fileBlobMap } from './materials.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 
@@ -66,7 +66,6 @@ export function loadSavedTexturesFromDB() {
                     const blob = new Blob([item.data], { type: item.type || 'image/png' });
                     const fileURL = URL.createObjectURL(blob);
 
-                    // CRITICAL FIX: Register texture Blob URLs into fileBlobMap on startup!
                     const nameLower = item.name.toLowerCase();
                     fileBlobMap.set(nameLower, fileURL);
                     fileBlobMap.set(item.name, fileURL);
@@ -102,44 +101,46 @@ export function loadSavedModelsFromDB() {
                 if (savedList.length === 0) return resolve();
 
                 const toolboxList = document.getElementById('toolbox-list');
-                let loadedCount = 0;
 
-                savedList.forEach(item => {
-                    const loader = new GLTFLoader();
-                    loader.parse(item.data, '', (gltf) => {
-                        const model = gltf.scene;
-                        model.name = item.name;
-                        state.loadedModels[model.name] = model;
+                const parsePromises = savedList.map(item => {
+                    return new Promise((res) => {
+                        const loader = new GLTFLoader();
+                        loader.parse(item.data, '', (gltf) => {
+                            const model = gltf.scene;
+                            model.name = item.name;
+                            state.loadedModels[model.name] = model;
 
-                        const thumbDataUrl = generateModelThumbnail(model);
-                        const tbItem = document.createElement('div');
-                        tbItem.className = 'asset-item';
-                        tbItem.innerHTML = `
-                            ${thumbDataUrl ? `<img class="asset-thumb" src="${thumbDataUrl}" alt="${model.name}">` : `<div class="asset-thumb" style="display:flex;align-items:center;justify-content:center;color:#00a2ff;font-size:18px;">📦</div>`}
-                            <div style="flex:1; overflow:hidden;">
-                                <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${model.name}</div>
-                                <div style="font-size:9px; color:#aaa;">3D Model (.glb)</div>
-                            </div>
-                            <span style="color:#00a2ff; font-weight:bold;">+ Add</span>
-                        `;
-                        tbItem.onclick = () => spawnModel(model.name);
-                        toolboxList.appendChild(tbItem);
+                            const thumbDataUrl = generateModelThumbnail(model);
+                            const tbItem = document.createElement('div');
+                            tbItem.className = 'asset-item';
+                            tbItem.innerHTML = `
+                                ${thumbDataUrl ? `<img class="asset-thumb" src="${thumbDataUrl}" alt="${model.name}">` : `<div class="asset-thumb" style="display:flex;align-items:center;justify-content:center;color:#00a2ff;font-size:18px;">📦</div>`}
+                                <div style="flex:1; overflow:hidden;">
+                                    <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${model.name}</div>
+                                    <div style="font-size:9px; color:#aaa;">3D Model (.glb)</div>
+                                </div>
+                                <span style="color:#00a2ff; font-weight:bold;">+ Add</span>
+                            `;
+                            tbItem.onclick = () => spawnModel(model.name);
+                            if (toolboxList) toolboxList.appendChild(tbItem);
 
-                        loadedCount++;
-                        if (loadedCount === savedList.length) resolve();
-                    }, () => {
-                        loadedCount++;
-                        if (loadedCount === savedList.length) resolve();
+                            res();
+                        }, () => res());
                     });
                 });
+
+                Promise.all(parsePromises).then(() => resolve());
             };
             request.onerror = () => resolve();
         } catch(e) { resolve(); }
     });
 }
 
+// Complete Clean Wipe of Auto-Save Memory
 export function clearAllSavedData() {
+    state.isRestoring = true; // Lock auto-save so beforeunload cannot re-save!
     localStorage.removeItem('studio_editor_autosave');
+    
     if (db) {
         try {
             const tx = db.transaction(["models", "textures"], "readwrite");
@@ -147,4 +148,10 @@ export function clearAllSavedData() {
             tx.objectStore("textures").clear();
         } catch(e) {}
     }
+
+    state.placedObjects = [];
+    state.undoStack = [];
+    state.redoStack = [];
+
+    window.location.reload();
 }

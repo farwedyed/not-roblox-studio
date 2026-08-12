@@ -3,12 +3,72 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { Lensflare, LensflareElement } from 'three/addons/objects/Lensflare.js';
 import { state } from './state.js';
 import { createRobloxSkyTexture, createFlareTexture, generateProceduralMaterials, materialTextureLibrary } from './materials.js';
-import { updatePropertiesUIValues } from './ui.js';
+import { updatePropertiesUIValues, saveState } from './ui.js';
 import { multiPivotGroup } from './selection.js';
-import { updateCamera } from './controls.js'; // Imports camera movement engine
+import { updateCamera } from './controls.js';
 
 export let scene, camera, renderer, transformControls, selectionBox;
 export let dirLight, hemiLight;
+export let robloxScaleGizmoGroup = null;
+export let robloxScaleHandles = {};
+
+export function createRobloxScaleGizmo() {
+    robloxScaleGizmoGroup = new THREE.Group();
+    robloxScaleGizmoGroup.name = "RobloxScaleGizmoGroup";
+
+    const handleGeo = new THREE.SphereGeometry(0.35, 16, 16);
+
+    const matX = new THREE.MeshBasicMaterial({ color: 0xff3333, depthTest: false, transparent: true, opacity: 0.9 });
+    const matY = new THREE.MeshBasicMaterial({ color: 0x33ff33, depthTest: false, transparent: true, opacity: 0.9 });
+    const matZ = new THREE.MeshBasicMaterial({ color: 0x3388ff, depthTest: false, transparent: true, opacity: 0.9 });
+
+    const handlePX = new THREE.Mesh(handleGeo, matX.clone()); handlePX.userData = { axis: 'PX' };
+    const handleNX = new THREE.Mesh(handleGeo, matX.clone()); handleNX.userData = { axis: 'NX' };
+
+    const handlePY = new THREE.Mesh(handleGeo, matY.clone()); handlePY.userData = { axis: 'PY' };
+    const handleNY = new THREE.Mesh(handleGeo, matY.clone()); handleNY.userData = { axis: 'NY' };
+
+    const handlePZ = new THREE.Mesh(handleGeo, matZ.clone()); handlePZ.userData = { axis: 'PZ' };
+    const handleNZ = new THREE.Mesh(handleGeo, matZ.clone()); handleNZ.userData = { axis: 'NZ' };
+
+    robloxScaleGizmoGroup.add(handlePX, handleNX, handlePY, handleNY, handlePZ, handleNZ);
+    robloxScaleGizmoGroup.visible = false;
+    scene.add(robloxScaleGizmoGroup);
+
+    robloxScaleHandles = {
+        PX: handlePX, NX: handleNX,
+        PY: handlePY, NY: handleNY,
+        PZ: handlePZ, NZ: handleNZ
+    };
+}
+
+export function updateRobloxScaleGizmoPositions(targetObj) {
+    if (!targetObj || !robloxScaleGizmoGroup) {
+        if (robloxScaleGizmoGroup) robloxScaleGizmoGroup.visible = false;
+        return;
+    }
+
+    if (state.currentTool !== 'scale' || state.selectedObjects.length === 0) {
+        robloxScaleGizmoGroup.visible = false;
+        return;
+    }
+
+    const box = new THREE.Box3().setFromObject(targetObj);
+    const center = box.getCenter(new THREE.Vector3());
+    const min = box.min;
+    const max = box.max;
+
+    robloxScaleHandles.PX.position.set(max.x, center.y, center.z);
+    robloxScaleHandles.NX.position.set(min.x, center.y, center.z);
+
+    robloxScaleHandles.PY.position.set(center.x, max.y, center.z);
+    robloxScaleHandles.NY.position.set(center.x, min.y, center.z);
+
+    robloxScaleHandles.PZ.position.set(center.x, center.y, max.z);
+    robloxScaleHandles.NZ.position.set(center.x, center.y, min.z);
+
+    robloxScaleGizmoGroup.visible = true;
+}
 
 export function initScene() {
     generateProceduralMaterials();
@@ -91,6 +151,43 @@ export function initScene() {
 
     transformControls = new TransformControls(camera, renderer.domElement);
     scene.add(transformControls);
+
+    // Build Roblox 6-Sphere Scale Gizmo
+    createRobloxScaleGizmo();
+
+    transformControls.addEventListener('change', () => {
+        const targetObj = (state.selectedObjects.length > 1 && multiPivotGroup) ? multiPivotGroup : state.selectedObject;
+        if (!targetObj || !transformControls.dragging) return;
+
+        const mode = transformControls.getMode();
+
+        if (mode === 'translate') {
+            const moveSnap = parseFloat(document.getElementById('snap-move-input')?.value || 1);
+            const transformReadout = document.getElementById('transform-readout');
+            if (transformReadout) {
+                transformReadout.innerText = `📍 Pos: X: ${targetObj.position.x.toFixed(1)} | Y: ${targetObj.position.y.toFixed(1)} | Z: ${targetObj.position.z.toFixed(1)} Studs (Snap: ${moveSnap})`;
+            }
+        } else if (mode === 'rotate') {
+            const rotX = Math.round(THREE.MathUtils.radToDeg(targetObj.rotation.x));
+            const rotY = Math.round(THREE.MathUtils.radToDeg(targetObj.rotation.y));
+            const rotZ = Math.round(THREE.MathUtils.radToDeg(targetObj.rotation.z));
+            const transformReadout = document.getElementById('transform-readout');
+            if (transformReadout) {
+                transformReadout.innerText = `🔄 Angle: X: ${rotX}° | Y: ${rotY}° | Z: ${rotZ}°`;
+            }
+        }
+
+        updatePropertiesUIValues();
+        updateRobloxScaleGizmoPositions(targetObj);
+        if (selectionBox) selectionBox.update();
+    });
+
+    // Capture complete state whenever standard transform gizmo interaction finishes
+    transformControls.addEventListener('dragging-changed', (event) => {
+        if (event.value === false) {
+            saveState();
+        }
+    });
 }
 
 export function updateLighting() {
@@ -143,11 +240,9 @@ export function onWindowResize() {
 
 export function animate() {
     requestAnimationFrame(animate);
-
-    // WASD Camera Flight Executed Every Frame!
     updateCamera();
 
-    if (selectionBox && selectionBox.visible && (state.selectedObject || multiPivotGroup)) {
+    if (selectionBox && selectionBox.visible && (state.selectedObject || window.multiPivotGroup)) {
         selectionBox.update();
     }
 

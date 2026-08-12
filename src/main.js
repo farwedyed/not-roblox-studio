@@ -3,7 +3,7 @@ import { initScene, animate } from './scene.js';
 import { initDB, loadSavedModelsFromDB, loadSavedTexturesFromDB, clearAllSavedData } from './db.js';
 import { setTool, updateSnapSettings, snapSelectedToGround, focusCamera, groupSelected, ungroupSelected, deleteSelected, duplicateSelected, toggleLockSelected, setupControlListeners, undo, redo } from './controls.js';
 import { insertPrimitive } from './loaders.js';
-import { exportMapJSON, checkAndRestoreAutoSave, autoSaveMap, hideContextMenu } from './ui.js';
+import { exportMapJSON, checkAndRestoreAutoSave, autoSaveMap, hideContextMenu, saveState } from './ui.js';
 import { setupGlobalLoadingManager } from './materials.js';
 
 function bindUIButtons() {
@@ -45,15 +45,25 @@ window.addEventListener('DOMContentLoaded', () => {
     bindUIButtons();
     setupControlListeners();
 
+    // Instant save when user refreshes or closes the page!
+    window.addEventListener('beforeunload', () => {
+        if (!state.isRestoring) autoSaveMap();
+    });
+
     initDB().then(() => {
-        // Load saved custom textures FIRST, then load models & auto-save!
         return loadSavedTexturesFromDB();
     }).then(() => {
         return loadSavedModelsFromDB();
     }).then(() => {
         checkAndRestoreAutoSave();
+        // Capture initial baseline baseline state to the undo stack
+        saveState();
+    }).catch(err => {
+        console.error("Startup restore error:", err);
+        state.isRestoring = false;
+        saveState();
     });
 
-    setInterval(autoSaveMap, 15000);
+    setInterval(autoSaveMap, 10000); // Auto-save every 10 seconds!
     animate();
 });
