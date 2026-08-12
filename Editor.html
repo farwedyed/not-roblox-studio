@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roblox Studio Web Map Editor</title>
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Importmap for Three.js ES6 Modules -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <div id="drag-overlay">📥 Drop 3D Models (.glb) / Images Here to Import!</div>
+    <div id="selection-marquee"></div>
+
+    <!-- Header Ribbon -->
+    <div id="header">
+        <label for="file-input-files" class="btn">📄 Add Files</label>
+        <input type="file" id="file-input-files" class="file-input-hidden" multiple accept="*">
+
+        <label for="file-input-folder" class="btn">📂 Open Folder</label>
+        <input type="file" id="file-input-folder" class="file-input-hidden" multiple webkitdirectory directory>
+        
+        <div class="divider"></div>
+
+        <button class="btn" id="btn-part-block">🟩 Part</button>
+        <button class="btn" id="btn-part-sphere">⚪ Sphere</button>
+
+        <div class="divider"></div>
+
+        <button class="btn btn-active" id="tool-select">🖐️ Select <span class="shortcut-badge">Ctrl+1</span></button>
+        <button class="btn" id="tool-translate">↖️ Move <span class="shortcut-badge">Ctrl+2</span></button>
+        <button class="btn" id="tool-scale">🔍 Scale <span class="shortcut-badge">Ctrl+3</span></button>
+        <button class="btn" id="tool-rotate">🔄 Rotate <span class="shortcut-badge">Ctrl+4</span></button>
+
+        <div class="divider"></div>
+
+        <span class="snap-label">Move:</span>
+        <select id="snap-move-select" class="snap-select">
+            <option value="1" selected>1 Stud</option>
+            <option value="0.5">0.5 Studs</option>
+            <option value="2">2 Studs</option>
+            <option value="4">4 Studs</option>
+            <option value="0">Off</option>
+        </select>
+
+        <span class="snap-label">Rotate:</span>
+        <select id="snap-rotate-select" class="snap-select">
+            <option value="15" selected>15°</option>
+            <option value="45">45°</option>
+            <option value="90">90°</option>
+            <option value="5">5°</option>
+            <option value="0">Off</option>
+        </select>
+
+        <button class="btn" id="btn-drop-ground">⬇️ Drop to Ground</button>
+
+        <div class="divider"></div>
+
+        <button class="btn" id="btn-undo">↩️ Undo <span class="shortcut-badge">Ctrl+Z</span></button>
+        <button class="btn" id="btn-redo">↪️ Redo <span class="shortcut-badge">Ctrl+Y</span></button>
+        <button class="btn" id="btn-focus">🎯 Focus <span class="shortcut-badge">F</span></button>
+
+        <div class="divider"></div>
+
+        <button class="btn" id="btn-group">📁 Group <span class="shortcut-badge">Ctrl+G</span></button>
+        <button class="btn" id="btn-ungroup">📂 Ungroup <span class="shortcut-badge">Ctrl+U</span></button>
+
+        <div class="divider"></div>
+
+        <button class="btn" id="btn-delete">🗑️ Delete</button>
+        <button class="btn" id="btn-duplicate">📋 Duplicate <span class="shortcut-badge">Ctrl+D</span></button>
+
+        <div class="divider"></div>
+
+        <button class="btn" id="btn-export" style="background:#28a745; border-color:#28a745;">💾 Export Map JSON</button>
+        <button class="btn" id="btn-clear-autosave" style="background:#dc3545; border-color:#dc3545;">🗑️ Clear Auto-Save</button>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="context-menu">
+        <div class="menu-item" id="ctx-duplicate">📋 Duplicate <span class="shortcut-badge">Ctrl+D</span></div>
+        <div class="menu-item" id="ctx-group">📁 Group <span class="shortcut-badge">Ctrl+G</span></div>
+        <div class="menu-item" id="ctx-ungroup">📂 Ungroup <span class="shortcut-badge">Ctrl+U</span></div>
+        <div class="menu-item" id="ctx-focus">🎯 Focus <span class="shortcut-badge">F</span></div>
+        <div class="menu-item" id="ctx-drop">⬇️ Drop to Ground</div>
+        <div class="menu-divider"></div>
+        <div class="menu-item" id="ctx-lock">🔒 Toggle Lock</div>
+        <div class="menu-item" id="ctx-delete">🗑️ Delete <span class="shortcut-badge">Del</span></div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div id="workspace-container">
+        
+        <!-- Toolbox -->
+        <div class="panel">
+            <div class="panel-header">🧰 Toolbox Assets</div>
+            <div class="panel-content" id="toolbox-list">
+                <div style="font-size: 11px; color: #888; text-align: center; margin-top: 20px;">
+                    Drag & Drop 3D models or images here, or click <b>"Add Files"</b>!
+                </div>
+            </div>
+        </div>
+
+        <!-- 3D Viewport -->
+        <div id="canvas-container">
+            <div id="crosshair"></div>
+            <div id="status-bar"></div>
+            <div id="transform-readout">📍 Position: 0 Studs</div>
+            <div id="controls-hint">
+                <b>Drag-Select Box:</b> Hold Left-Click & Drag to Box Select | <b>Right-Click Explorer:</b> Open Context Menu<br>
+                <b>Camera Flight:</b> Hold Right-Click + WASD | <b>Auto-Save:</b> Persistent IndexedDB active!
+            </div>
+        </div>
+
+        <!-- Right Sidebar -->
+        <div id="right-sidebar">
+            <div id="explorer-panel">
+                <div class="panel-header">🌴 Explorer (Workspace)</div>
+                <div class="panel-content" id="explorer-tree"></div>
+            </div>
+
+            <div id="properties-panel">
+                <div class="panel-header">⚙️ Properties</div>
+                <div id="properties-content" style="padding: 4px;">
+                    <div style="color: #666; font-size: 11px; text-align: center; padding: 20px;">Select an object or Lighting service in Explorer</div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Application Entry Point -->
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
