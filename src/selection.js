@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { state } from './state.js';
 import { scene, camera, transformControls, selectionBox, updateRobloxScaleGizmoPositions } from './scene.js';
-import { updateExplorerUI, renderPropertiesPanel, renderLightingProperties } from './ui.js';
+import { updateExplorerUI, renderPropertiesPanel } from './ui.js';
 
 export let multiPivotGroup = null;
 
@@ -9,7 +9,29 @@ export function clearMultiPivot() {
     if (multiPivotGroup) {
         while (multiPivotGroup.children.length > 0) {
             const child = multiPivotGroup.children[0];
-            scene.attach(child);
+            let origParent = child.userData.originalParent;
+            delete child.userData.originalParent;
+
+            // Validate that original parent is still present in the scene
+            let parentValid = false;
+            let check = origParent;
+            while (check) {
+                if (check === scene) {
+                    parentValid = true;
+                    break;
+                }
+                check = check.parent;
+            }
+
+            if (parentValid && origParent && origParent !== scene) {
+                origParent.attach(child);
+            } else {
+                scene.attach(child);
+                // Ensure root-level objects are kept inside tracking array
+                if (!state.placedObjects.includes(child)) {
+                    state.placedObjects.push(child);
+                }
+            }
         }
         scene.remove(multiPivotGroup);
         multiPivotGroup = null;
@@ -31,6 +53,8 @@ export function setupMultiPivot(objectsArray) {
 
     objectsArray.forEach(o => {
         if (o.parent && o.parent !== multiPivotGroup) {
+            // Save original group or scene parent reference
+            o.userData.originalParent = o.parent;
             multiPivotGroup.attach(o);
         }
     });

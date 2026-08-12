@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { state, serializeObject } from './state.js';
+import { state, serializeObject, getSerializableObjects } from './state.js';
 import { scene, transformControls, selectionBox, updateLighting, updateRobloxScaleGizmoPositions } from './scene.js';
 import { selectObject, selectMultipleObjects, selectLightingService, clearMultiPivot } from './selection.js';
 import { applyMaterialToSelected, setTextureRepeatScale } from './loaders.js';
@@ -17,9 +17,10 @@ export function autoSaveMap() {
     if (state.isRestoring) return; // Blocked if clearing or restoring!
     if (!state.placedObjects || state.placedObjects.length === 0) return;
     try {
+        const serializable = getSerializableObjects();
         const exportData = {
             lighting: { ...state.lightingSettings },
-            objects: state.placedObjects.map(o => serializeObject(o, scene))
+            objects: serializable.map(o => serializeObject(o, scene))
         };
         localStorage.setItem('studio_editor_autosave', JSON.stringify(exportData));
     } catch(e) {}
@@ -46,7 +47,8 @@ export function checkAndRestoreAutoSave() {
 export function saveState() {
     if (state.isRestoring) return;
     if (!state.placedObjects) return;
-    const snapshot = state.placedObjects.map(o => serializeObject(o, scene));
+    const serializable = getSerializableObjects();
+    const snapshot = serializable.map(o => serializeObject(o, scene));
     const jsonStr = JSON.stringify(snapshot);
 
     if (state.undoStack.length > 0 && state.undoStack[state.undoStack.length - 1] === jsonStr) {
@@ -128,13 +130,12 @@ export function restoreState(jsonState) {
             obj.userData = { locked: !!item.locked, isUserGroup: true };
         }
 
+        if (item.uuid) {
+            obj.uuid = item.uuid;
+        }
         obj.name = item.name;
         obj.castShadow = !!item.castShadow;
         obj.receiveShadow = !!item.receiveShadow;
-
-        obj.position.set(item.position.x, item.position.y, item.position.z);
-        obj.rotation.set(item.rotation.x, item.rotation.y, item.rotation.z);
-        obj.scale.set(item.scale.x, item.scale.y, item.scale.z);
 
         let tex = null;
         if (item.textureName && state.loadedTextures[item.textureName]) {
@@ -158,15 +159,47 @@ export function restoreState(jsonState) {
             });
         }
 
-        objectMap.set(obj.name, { instance: obj, parentName: item.parentName });
+        // Backward compatibility fallback to support previous non-UUID maps and auto-saves
+        const key = item.uuid || item.name;
+        const parentKey = item.parentUuid || item.parentName;
+
+        objectMap.set(key, { instance: obj, parentKey: parentKey, rawItem: item });
     });
 
-    objectMap.forEach(({ instance, parentName }) => {
-        if (parentName && objectMap.has(parentName)) {
-            objectMap.get(parentName).instance.add(instance);
+    // 1. Build relationships first based on UUIDs or fallback names
+    objectMap.forEach(({ instance, parentKey }) => {
+        if (parentKey && objectMap.has(parentKey)) {
+            objectMap.get(parentKey).instance.add(instance);
         } else {
             scene.add(instance);
             state.placedObjects.push(instance);
+        }
+    });
+
+    // 2. Adjust local vectors based on absolute world coordinates (resolves nested scaling/offset bugs)
+    data.forEach(item => {
+        const key = item.uuid || item.name;
+        const mapping = objectMap.get(key);
+        if (!mapping) return;
+        const obj = mapping.instance;
+
+        obj.position.set(item.position.x, item.position.y, item.position.z);
+        obj.scale.set(item.scale.x, item.scale.y, item.scale.z);
+
+        const worldQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(item.rotation.x, item.rotation.y, item.rotation.z));
+
+        if (obj.parent && obj.parent !== scene && obj.parent.name !== "TempMultiPivot") {
+            obj.parent.worldToLocal(obj.position);
+
+            const parentWorldQ = new THREE.Quaternion();
+            obj.parent.getWorldQuaternion(parentWorldQ);
+            obj.quaternion.copy(parentWorldQ.invert().multiply(worldQ));
+
+            const parentWorldScale = new THREE.Vector3();
+            obj.parent.getWorldScale(parentWorldScale);
+            obj.scale.divide(parentWorldScale);
+        } else {
+            obj.quaternion.copy(worldQ);
         }
     });
 
@@ -287,7 +320,6 @@ export function renderLightingProperties() {
         updateLighting();
     });
     
-    // Save state once user stops sliding the time slider
     bindEvent('light-time-slider', 'onchange', () => {
         saveState();
     });
@@ -664,9 +696,10 @@ export function updatePropertiesUIValues() {
 }
 
 export function exportMapJSON() {
+    const serializable = getSerializableObjects();
     const exportData = {
         lighting: { ...state.lightingSettings },
-        objects: state.placedObjects.map(o => serializeObject(o, scene))
+        objects: serializable.map(o => serializeObject(o, scene))
     };
 
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));

@@ -34,7 +34,14 @@ export function serializeObject(obj, scene) {
     obj.getWorldScale(worldScale);
 
     const isInsideTempPivot = (obj.parent && obj.parent.name === "TempMultiPivot");
-    const realParent = isInsideTempPivot ? null : ((obj.parent && obj.parent !== scene) ? obj.parent.name : null);
+    
+    // Fallback to original parent reference if currently inside multiselection
+    const parentRef = isInsideTempPivot 
+        ? (obj.userData.originalParent && obj.userData.originalParent !== scene ? obj.userData.originalParent : null) 
+        : ((obj.parent && obj.parent !== scene) ? obj.parent : null);
+
+    const parentUuid = parentRef ? parentRef.uuid : null;
+    const parentName = parentRef ? parentRef.name : null;
 
     let mapTexName = obj.userData ? (obj.userData.textureName || null) : null;
     let repeatU = 1, repeatV = 1;
@@ -61,8 +68,10 @@ export function serializeObject(obj, scene) {
     }
 
     return {
+        uuid: obj.uuid,
+        parentUuid: parentUuid,
+        parentName: parentName,
         name: obj.name,
-        parentName: realParent,
         objectType: objectType,
         modelType: obj.userData ? (obj.userData.modelType || null) : null,
         materialName: obj.userData ? (obj.userData.materialName || "Plastic") : "Plastic",
@@ -85,4 +94,33 @@ export function serializeObject(obj, scene) {
         rotation: { x: worldRot.x, y: worldRot.y, z: worldRot.z },
         scale: { x: worldScale.x, y: worldScale.y, z: worldScale.z }
     };
+}
+
+export function getSerializableObjects() {
+    const list = [];
+    const traverse = (obj) => {
+        if (!obj) return;
+        list.push(obj);
+
+        if (obj.userData && obj.userData.modelType) {
+            return;
+        }
+
+        if (obj.children) {
+            obj.children.forEach(child => {
+                if (child.name === "TempMultiPivot" || 
+                    child.name === "RobloxScaleGizmoGroup" || 
+                    child.isTransformControls || 
+                    child.isLight || 
+                    child.userData?.isHelper) return;
+                traverse(child);
+            });
+        }
+    };
+
+    state.placedObjects.forEach(root => {
+        traverse(root);
+    });
+
+    return list;
 }

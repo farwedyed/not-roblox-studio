@@ -120,7 +120,11 @@ export function deleteSelected() {
     updateRobloxScaleGizmoPositions(null);
 
     state.selectedObjects.forEach(obj => {
-        scene.remove(obj);
+        if (obj.parent) {
+            obj.parent.remove(obj);
+        } else {
+            scene.remove(obj);
+        }
         state.placedObjects = state.placedObjects.filter(o => o !== obj);
     });
 
@@ -138,7 +142,14 @@ export function duplicateSelected() {
         const clone = obj.clone();
         clone.name = obj.name + "_Copy";
         clone.position.x += 2;
-        clone.userData = JSON.parse(JSON.stringify(obj.userData || {}));
+        
+        // Ensure cloned descendants do not inherit active temporary parenting properties
+        clone.traverse(child => {
+            if (child.userData) {
+                delete child.userData.originalParent;
+            }
+        });
+
         scene.add(clone);
         state.placedObjects.push(clone);
         newSelection.push(clone);
@@ -160,7 +171,7 @@ export function groupSelected() {
     scene.add(modelGroup);
     state.selectedObjects.forEach(obj => {
         if (obj.name !== "Baseplate") {
-            modelGroup.add(obj);
+            modelGroup.attach(obj);
             state.placedObjects = state.placedObjects.filter(o => o !== obj);
         }
     });
@@ -177,7 +188,7 @@ export function ungroupSelected() {
 
     while (state.selectedObject.children.length > 0) {
         const child = state.selectedObject.children[0];
-        scene.add(child);
+        scene.attach(child);
         state.placedObjects.push(child);
     }
 
