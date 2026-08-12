@@ -172,7 +172,7 @@ export function ungroupSelected() {
     showStatus("Ungrouped Model");
 }
 
-// Export updateCamera so scene.js animate() loop can execute WASD camera flight!
+// Exported WASD Camera Flight Movement
 export function updateCamera() {
     if (!isRightMouseDown) return;
     const speed = keys['shift'] ? 0.08 : 0.35;
@@ -253,6 +253,11 @@ export function setupControlListeners() {
     });
 
     renderer.domElement.addEventListener('mousedown', (e) => {
+        // Automatically unfocus any text inputs in Properties panel so WASD keys work instantly!
+        if (document.activeElement && document.activeElement !== document.body) {
+            document.activeElement.blur();
+        }
+
         if (e.button === 2) {
             isRightMouseDown = true;
             rMouseX = e.clientX;
@@ -426,7 +431,7 @@ export function setupControlListeners() {
     });
 
     window.addEventListener('keydown', (e) => {
-        if (document.activeElement.tagName === 'INPUT') return;
+        if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
 
         keys[e.key.toLowerCase()] = true;
         if (e.key === 'Shift') keys['shift'] = true;

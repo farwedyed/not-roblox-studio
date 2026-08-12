@@ -1,10 +1,11 @@
 import { state } from './state.js';
-import { generateModelThumbnail } from './loaders.js';
-import { spawnModel } from './loaders.js';
+import { generateModelThumbnail, spawnModel } from './loaders.js';
+import { fileBlobMap } from './materials.js'; // Imported fileBlobMap!
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as THREE from 'three';
 
 const DB_NAME = "StudioEditorDB";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let db = null;
 
 export function initDB() {
@@ -14,6 +15,9 @@ export function initDB() {
             const database = e.target.result;
             if (!database.objectStoreNames.contains("models")) {
                 database.createObjectStore("models", { keyPath: "name" });
+            }
+            if (!database.objectStoreNames.contains("textures")) {
+                database.createObjectStore("textures", { keyPath: "name" });
             }
         };
         request.onsuccess = (e) => {
@@ -33,6 +37,56 @@ export function saveModelToDB(name, arrayBuffer) {
         const tx = db.transaction("models", "readwrite");
         tx.objectStore("models").put({ name: name, data: arrayBuffer });
     } catch(e) {}
+}
+
+export function saveTextureToDB(name, arrayBuffer, mimeType) {
+    if (!db) return;
+    try {
+        const tx = db.transaction("textures", "readwrite");
+        tx.objectStore("textures").put({ name: name, data: arrayBuffer, type: mimeType });
+    } catch(e) {}
+}
+
+export function loadSavedTexturesFromDB() {
+    return new Promise((resolve) => {
+        if (!db) return resolve();
+        try {
+            const tx = db.transaction("textures", "readonly");
+            const store = tx.objectStore("textures");
+            const request = store.getAll();
+
+            request.onsuccess = () => {
+                const savedList = request.result || [];
+                if (savedList.length === 0) return resolve();
+
+                const textureLoader = new THREE.TextureLoader();
+                let loadedCount = 0;
+
+                savedList.forEach(item => {
+                    const blob = new Blob([item.data], { type: item.type || 'image/png' });
+                    const fileURL = URL.createObjectURL(blob);
+
+                    // CRITICAL FIX: Register texture Blob URLs into fileBlobMap on startup!
+                    const nameLower = item.name.toLowerCase();
+                    fileBlobMap.set(nameLower, fileURL);
+                    fileBlobMap.set(item.name, fileURL);
+
+                    textureLoader.load(fileURL, (texture) => {
+                        texture.wrapS = THREE.RepeatWrapping;
+                        texture.wrapT = THREE.RepeatWrapping;
+                        state.loadedTextures[item.name] = texture;
+
+                        loadedCount++;
+                        if (loadedCount === savedList.length) resolve();
+                    }, undefined, () => {
+                        loadedCount++;
+                        if (loadedCount === savedList.length) resolve();
+                    });
+                });
+            };
+            request.onerror = () => resolve();
+        } catch(e) { resolve(); }
+    });
 }
 
 export function loadSavedModelsFromDB() {
@@ -88,8 +142,9 @@ export function clearAllSavedData() {
     localStorage.removeItem('studio_editor_autosave');
     if (db) {
         try {
-            const tx = db.transaction("models", "readwrite");
+            const tx = db.transaction(["models", "textures"], "readwrite");
             tx.objectStore("models").clear();
+            tx.objectStore("textures").clear();
         } catch(e) {}
     }
 }

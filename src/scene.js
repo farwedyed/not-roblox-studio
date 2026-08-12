@@ -5,7 +5,7 @@ import { state } from './state.js';
 import { createRobloxSkyTexture, createFlareTexture, generateProceduralMaterials, materialTextureLibrary } from './materials.js';
 import { updatePropertiesUIValues } from './ui.js';
 import { multiPivotGroup } from './selection.js';
-import { updateCamera } from './controls.js'; // Added import for updateCamera!
+import { updateCamera } from './controls.js'; // Imports camera movement engine
 
 export let scene, camera, renderer, transformControls, selectionBox;
 export let dirLight, hemiLight;
@@ -144,7 +144,7 @@ export function onWindowResize() {
 export function animate() {
     requestAnimationFrame(animate);
 
-    // Call updateCamera() every frame tick!
+    // WASD Camera Flight Executed Every Frame!
     updateCamera();
 
     if (selectionBox && selectionBox.visible && (state.selectedObject || multiPivotGroup)) {

@@ -1,14 +1,56 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { state } from './state.js';
-import { scene } from './scene.js';
-import { saveModelToDB } from './db.js';
+import { scene, camera } from './scene.js';
+import { saveModelToDB, saveTextureToDB } from './db.js';
 import { DUMMY_WHITE_PIXEL, materialTextureLibrary, fileBlobMap } from './materials.js';
 import { selectMultipleObjects } from './selection.js';
 import { updateExplorer, showStatus, saveState } from './ui.js';
 
 let sharedThumbRenderer = null;
 const textureLoader = new THREE.TextureLoader();
+
+export function getSpawnPositionForNewObject(objectToSpawn) {
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+    const intersects = raycaster.intersectObjects(state.placedObjects, true);
+
+    if (intersects.length > 0) {
+        const hit = intersects[0];
+        const box = new THREE.Box3().setFromObject(objectToSpawn);
+        const heightOffset = objectToSpawn.position.y - box.min.y;
+
+        const moveVal = parseFloat(document.getElementById('snap-move-select')?.value) || 1;
+
+        let posX = hit.point.x;
+        let posZ = hit.point.z;
+        let posY = hit.point.y + heightOffset;
+
+        if (moveVal > 0) {
+            posX = Math.round(posX / moveVal) * moveVal;
+            posZ = Math.round(posZ / moveVal) * moveVal;
+        }
+
+        return new THREE.Vector3(posX, posY, posZ);
+    } else {
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        const spawnPos = camera.position.clone().add(forward.multiplyScalar(15));
+
+        const box = new THREE.Box3().setFromObject(objectToSpawn);
+        const heightOffset = objectToSpawn.position.y - box.min.y;
+        if (spawnPos.y < heightOffset) spawnPos.y = heightOffset;
+
+        const moveVal = parseFloat(document.getElementById('snap-move-select')?.value) || 1;
+        if (moveVal > 0) {
+            spawnPos.x = Math.round(spawnPos.x / moveVal) * moveVal;
+            spawnPos.z = Math.round(spawnPos.z / moveVal) * moveVal;
+        }
+
+        return spawnPos;
+    }
+}
 
 export function generateModelThumbnail(model) {
     try {
@@ -77,8 +119,6 @@ export function processImportedFiles(files) {
         }
     });
 
-    const customGltfLoader = new GLTFLoader();
-
     glbFiles.forEach(file => {
         const cleanName = file.name.replace(/\.(glb|gltf)$/i, '');
         const reader = new FileReader();
@@ -86,6 +126,8 @@ export function processImportedFiles(files) {
         reader.onload = function(e) {
             const arrayBuffer = e.target.result;
             saveModelToDB(cleanName, arrayBuffer);
+
+            const customGltfLoader = new GLTFLoader();
 
             customGltfLoader.parse(
                 arrayBuffer,
@@ -112,7 +154,24 @@ export function processImportedFiles(files) {
                     showStatus("Loaded Model: " + model.name);
                 },
                 (err) => {
-                    console.warn("Parse fallback for " + file.name, err);
+                    const fallbackLoader = new GLTFLoader();
+                    fallbackLoader.parse(arrayBuffer, '', (gltf) => {
+                        const model = gltf.scene;
+                        model.name = cleanName;
+                        state.loadedModels[model.name] = model;
+                        const item = document.createElement('div');
+                        item.className = 'asset-item';
+                        item.innerHTML = `
+                            <div class="asset-thumb" style="display:flex;align-items:center;justify-content:center;color:#00a2ff;font-size:18px;">📦</div>
+                            <div style="flex:1; overflow:hidden;">
+                                <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${model.name}</div>
+                                <div style="font-size:9px; color:#aaa;">3D Model (.glb)</div>
+                            </div>
+                            <span style="color:#00a2ff; font-weight:bold;">+ Add</span>
+                        `;
+                        item.onclick = () => spawnModel(model.name);
+                        toolboxList.appendChild(item);
+                    });
                 }
             );
         };
@@ -121,30 +180,44 @@ export function processImportedFiles(files) {
     });
 
     imageFiles.forEach(file => {
-        const fileURL = URL.createObjectURL(file);
         const nameLower = file.name.toLowerCase();
+        const reader = new FileReader();
 
-        textureLoader.load(fileURL, (texture) => {
-            texture.wrapS = THREE.RepeatWrapping;
-            texture.wrapT = THREE.RepeatWrapping;
-            state.loadedTextures[file.name] = texture;
+        reader.onload = function(e) {
+            const arrayBuffer = e.target.result;
+            // CRITICAL FIX: Save image texture bytes to IndexedDB so it persists on reload!
+            saveTextureToDB(file.name, arrayBuffer, file.type);
 
-            if (nameLower.includes('skybox')) {
-                const item = document.createElement('div');
-                item.className = 'asset-item';
-                item.style.borderColor = '#28a745';
-                item.innerHTML = `
-                    <img class="asset-thumb" src="${fileURL}" alt="${file.name}">
-                    <div style="flex:1; overflow:hidden;">
-                        <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${file.name}</div>
-                        <div style="font-size:9px; color:#28a745;">Skybox Image</div>
-                    </div>
-                    <span style="color:#28a745; font-weight:bold;">Set Sky</span>
-                `;
-                item.onclick = () => { scene.background = texture; scene.environment = texture; };
-                toolboxList.appendChild(item);
-            }
-        });
+            const blob = new Blob([arrayBuffer], { type: file.type });
+            const fileURL = URL.createObjectURL(blob);
+
+            fileBlobMap.set(nameLower, fileURL);
+            fileBlobMap.set(file.name, fileURL);
+
+            textureLoader.load(fileURL, (texture) => {
+                texture.wrapS = THREE.RepeatWrapping;
+                texture.wrapT = THREE.RepeatWrapping;
+                state.loadedTextures[file.name] = texture;
+
+                if (nameLower.includes('skybox')) {
+                    const item = document.createElement('div');
+                    item.className = 'asset-item';
+                    item.style.borderColor = '#28a745';
+                    item.innerHTML = `
+                        <img class="asset-thumb" src="${fileURL}" alt="${file.name}">
+                        <div style="flex:1; overflow:hidden;">
+                            <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${file.name}</div>
+                            <div style="font-size:9px; color:#28a745;">Skybox Image</div>
+                        </div>
+                        <span style="color:#28a745; font-weight:bold;">Set Sky</span>
+                    `;
+                    item.onclick = () => { scene.background = texture; scene.environment = texture; };
+                    toolboxList.appendChild(item);
+                }
+            });
+        };
+
+        reader.readAsArrayBuffer(file);
     });
 }
 
@@ -163,6 +236,9 @@ export function spawnModel(modelName) {
         if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
     });
 
+    const spawnPos = getSpawnPositionForNewObject(model);
+    model.position.copy(spawnPos);
+
     scene.add(model);
     state.placedObjects.push(model);
 
@@ -177,11 +253,13 @@ export function insertPrimitive(type) {
     if (type === 'Sphere') geo = new THREE.SphereGeometry(1.5, 32, 32);
 
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(0, 1, 0);
     mesh.name = type + "_" + (state.placedObjects.length + 1);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { locked: false, anchored: true, canCollide: true, isPrimitive: true, primitiveType: type };
+
+    const spawnPos = getSpawnPositionForNewObject(mesh);
+    mesh.position.copy(spawnPos);
 
     scene.add(mesh);
     state.placedObjects.push(mesh);

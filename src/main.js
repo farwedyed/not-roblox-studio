@@ -1,9 +1,9 @@
 import { state } from './state.js';
 import { initScene, animate } from './scene.js';
-import { initDB, loadSavedModelsFromDB, clearAllSavedData } from './db.js';
-import { setTool, updateSnapSettings, snapSelectedToGround, focusCamera, groupSelected, ungroupSelected, deleteSelected, duplicateSelected, toggleLockSelected, setupControlListeners } from './controls.js';
+import { initDB, loadSavedModelsFromDB, loadSavedTexturesFromDB, clearAllSavedData } from './db.js';
+import { setTool, updateSnapSettings, snapSelectedToGround, focusCamera, groupSelected, ungroupSelected, deleteSelected, duplicateSelected, toggleLockSelected, setupControlListeners, undo, redo } from './controls.js';
 import { insertPrimitive } from './loaders.js';
-import { exportMapJSON, checkAndRestoreAutoSave, autoSaveMap, hideContextMenu, undo, redo } from './ui.js';
+import { exportMapJSON, checkAndRestoreAutoSave, autoSaveMap, hideContextMenu } from './ui.js';
 import { setupGlobalLoadingManager } from './materials.js';
 
 function bindUIButtons() {
@@ -46,6 +46,9 @@ window.addEventListener('DOMContentLoaded', () => {
     setupControlListeners();
 
     initDB().then(() => {
+        // Load saved custom textures FIRST, then load models & auto-save!
+        return loadSavedTexturesFromDB();
+    }).then(() => {
         return loadSavedModelsFromDB();
     }).then(() => {
         checkAndRestoreAutoSave();

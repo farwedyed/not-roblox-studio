@@ -35,11 +35,27 @@ export function serializeObject(obj, scene) {
     const isInsideTempPivot = (obj.parent && obj.parent.name === "TempMultiPivot");
     const realParent = isInsideTempPivot ? null : ((obj.parent && obj.parent !== scene) ? obj.parent.name : null);
 
+    let mapTexName = obj.userData ? (obj.userData.textureName || null) : null;
+    let repeatU = 1, repeatV = 1;
+    let offsetU = 0, offsetV = 0;
+
+    obj.traverse(c => {
+        if (c.isMesh && c.material && c.material.map) {
+            repeatU = c.material.map.repeat.x;
+            repeatV = c.material.map.repeat.y;
+            offsetU = c.material.map.offset.x;
+            offsetV = c.material.map.offset.y;
+        }
+    });
+
     return {
         name: obj.name,
         parentName: realParent,
         modelType: obj.userData ? (obj.userData.modelType || null) : null,
         materialName: obj.userData ? (obj.userData.materialName || "Plastic") : "Plastic",
+        textureName: mapTexName,
+        textureRepeat: { u: repeatU, v: repeatV },
+        textureOffset: { u: offsetU, v: offsetV },
         isPrimitive: obj.userData ? !!obj.userData.isPrimitive : false,
         primitiveType: obj.userData ? (obj.userData.primitiveType || null) : null,
         isBaseplate: obj.name === "Baseplate",

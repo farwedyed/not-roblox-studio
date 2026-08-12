@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { state, serializeObject } from './state.js';
 import { scene, transformControls, selectionBox, updateLighting } from './scene.js';
 import { selectObject, selectMultipleObjects, selectLightingService, clearMultiPivot } from './selection.js';
-import { applyMaterialToSelected, setTextureRepeatScale } from './loaders.js';
+import { applyMaterialToSelected, setTextureRepeatScale, processImportedFiles } from './loaders.js';
+import { saveTextureToDB } from './db.js';
+import { materialTextureLibrary } from './materials.js';
 
 const textureLoader = new THREE.TextureLoader();
 
@@ -112,6 +114,29 @@ export function restoreState(jsonState) {
         obj.rotation.set(item.rotation.x, item.rotation.y, item.rotation.z);
         obj.scale.set(item.scale.x, item.scale.y, item.scale.z);
 
+        // Restore Custom Image Texture or Procedural Material
+        let tex = null;
+        if (item.textureName && state.loadedTextures[item.textureName]) {
+            tex = state.loadedTextures[item.textureName].clone();
+            obj.userData.textureName = item.textureName;
+        } else if (item.materialName && materialTextureLibrary[item.materialName]) {
+            tex = materialTextureLibrary[item.materialName].clone();
+            obj.userData.materialName = item.materialName;
+        }
+
+        if (tex) {
+            tex.needsUpdate = true;
+            if (item.textureRepeat) tex.repeat.set(item.textureRepeat.u, item.textureRepeat.v);
+            if (item.textureOffset) tex.offset.set(item.textureOffset.u, item.textureOffset.v);
+
+            obj.traverse(c => {
+                if (c.isMesh) {
+                    c.material.map = tex;
+                    c.material.needsUpdate = true;
+                }
+            });
+        }
+
         objectMap.set(obj.name, { instance: obj, parentName: item.parentName });
     });
 
@@ -142,14 +167,12 @@ export function showContextMenu(x, y) {
     }
 }
 
-// Clean DOM Event Binding for Explorer Tree
 export function updateExplorer() {
     const explorerTree = document.getElementById('explorer-tree');
     if (!explorerTree) return;
 
     explorerTree.innerHTML = '';
 
-    // 1. Lighting Service Item
     const lightingItem = document.createElement('div');
     lightingItem.className = `tree-item ${state.isLightingSelected ? 'selected' : ''}`;
     lightingItem.innerHTML = `<span>☀️</span> Lighting`;
@@ -161,7 +184,6 @@ export function updateExplorer() {
     };
     explorerTree.appendChild(lightingItem);
 
-    // 2. Placed Objects & Baseplate Items
     state.placedObjects.forEach(obj => {
         const item = document.createElement('div');
         const isSel = state.selectedObjects.includes(obj) || state.selectedObject === obj;
@@ -262,6 +284,22 @@ export function renderPropertiesPanel() {
     const colorHex = (isMesh && state.selectedObject.material && state.selectedObject.material.color) ? "#" + state.selectedObject.material.color.getHexString() : "#ffffff";
     const currentMatName = state.selectedObject.userData.materialName || "Plastic";
 
+    // Read Texture Mapping Properties
+    let curTexName = state.selectedObject.userData.textureName || "None";
+    let repeatU = 1, repeatV = 1;
+    let offsetU = 0, offsetV = 0;
+
+    state.selectedObject.traverse(c => {
+        if (c.isMesh && c.material && c.material.map) {
+            repeatU = c.material.map.repeat.x;
+            repeatV = c.material.map.repeat.y;
+            offsetU = c.material.map.offset.x;
+            offsetV = c.material.map.offset.y;
+        }
+    });
+
+    const textureKeys = Object.keys(state.loadedTextures);
+
     propertiesContent.innerHTML = `
         <div class="prop-section">Data (${state.selectedObjects.length} Selected)</div>
         <div class="prop-row">
@@ -273,7 +311,7 @@ export function renderPropertiesPanel() {
             <input type="checkbox" id="prop-locked" ${state.selectedObject.userData.locked ? 'checked' : ''}>
         </div>
 
-        <div class="prop-section">Material & Custom Texture</div>
+        <div class="prop-section">Material & Texture ID</div>
         <div class="prop-row">
             <span class="prop-label">Material</span>
             <select class="prop-input" id="prop-material">
@@ -287,13 +325,32 @@ export function renderPropertiesPanel() {
             </select>
         </div>
         <div class="prop-row">
-            <span class="prop-label">Custom Texture</span>
-            <label for="prop-custom-tex-file" class="btn" style="padding:2px 6px; font-size:10px;">📷 Upload Texture</label>
-            <input type="file" id="prop-custom-tex-file" class="file-input-hidden" accept="image/*">
+            <span class="prop-label">Texture ID</span>
+            <select class="prop-input" id="prop-texture-id">
+                <option value="None">None (Color Only)</option>
+                ${textureKeys.map(k => `<option value="${k}" ${curTexName === k ? 'selected' : ''}>${k}</option>`).join('')}
+            </select>
         </div>
         <div class="prop-row">
-            <span class="prop-label">Texture Scale</span>
-            <input type="range" id="prop-texscale" min="1" max="20" step="1" value="4">
+            <span class="prop-label">Upload Texture</span>
+            <label for="prop-custom-tex-file" class="btn" style="padding:2px 6px; font-size:10px;">📷 Select Image</label>
+            <input type="file" id="prop-custom-tex-file" class="file-input-hidden" accept="image/*">
+        </div>
+
+        <div class="prop-section">UV Mapping (StudsPerTile)</div>
+        <div class="prop-row">
+            <span class="prop-label">StudsPerTile U / V</span>
+            <div class="vector3-group">
+                <input id="prop-tile-u" type="number" step="0.5" value="${repeatU}">
+                <input id="prop-tile-v" type="number" step="0.5" value="${repeatV}">
+            </div>
+        </div>
+        <div class="prop-row">
+            <span class="prop-label">Offset U / V</span>
+            <div class="vector3-group">
+                <input id="prop-off-u" type="number" step="0.1" value="${offsetU}">
+                <input id="prop-off-v" type="number" step="0.1" value="${offsetV}">
+            </div>
         </div>
 
         <div class="prop-section">Behavior (Bulk Edit)</div>
@@ -358,29 +415,94 @@ export function renderPropertiesPanel() {
         applyMaterialToSelected(e.target.value);
     };
 
+    document.getElementById('prop-texture-id').onchange = (e) => {
+        const texName = e.target.value;
+        if (texName === "None") {
+            saveState();
+            state.selectedObjects.forEach(obj => {
+                obj.userData.textureName = null;
+                obj.traverse(c => { if (c.isMesh) c.material.map = null; c.material.needsUpdate = true; });
+            });
+        } else if (state.loadedTextures[texName]) {
+            saveState();
+            const tex = state.loadedTextures[texName].clone();
+            tex.needsUpdate = true;
+            state.selectedObjects.forEach(obj => {
+                obj.userData.textureName = texName;
+                obj.traverse(c => { if (c.isMesh) { c.material.map = tex; c.material.needsUpdate = true; } });
+            });
+        }
+    };
+
     document.getElementById('prop-custom-tex-file').onchange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        const url = URL.createObjectURL(file);
-        textureLoader.load(url, (tex) => {
-            tex.wrapS = THREE.RepeatWrapping;
-            tex.wrapT = THREE.RepeatWrapping;
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const arrayBuffer = ev.target.result;
+            saveTextureToDB(file.name, arrayBuffer, file.type);
+
+            const blob = new Blob([arrayBuffer], { type: file.type });
+            const url = URL.createObjectURL(blob);
+
+            textureLoader.load(url, (tex) => {
+                tex.wrapS = THREE.RepeatWrapping;
+                tex.wrapT = THREE.RepeatWrapping;
+                state.loadedTextures[file.name] = tex;
+
+                saveState();
+                state.selectedObjects.forEach(obj => {
+                    obj.userData.textureName = file.name;
+                    obj.traverse(c => {
+                        if (c.isMesh) {
+                            c.material.map = tex;
+                            c.material.needsUpdate = true;
+                        }
+                    });
+                });
+                renderPropertiesPanel();
+                showStatus("Applied & Saved Custom Texture!");
+            });
+        };
+        reader.readAsArrayBuffer(file);
+    };
+
+    // UV StudsPerTile (Repeat)
+    ['prop-tile-u', 'prop-tile-v'].forEach((id, idx) => {
+        document.getElementById(id).onchange = () => {
             saveState();
+            const uVal = parseFloat(document.getElementById('prop-tile-u').value) || 1;
+            const vVal = parseFloat(document.getElementById('prop-tile-v').value) || 1;
+
             state.selectedObjects.forEach(obj => {
                 obj.traverse(c => {
-                    if (c.isMesh) {
-                        c.material.map = tex;
-                        c.material.needsUpdate = true;
+                    if (c.isMesh && c.material.map) {
+                        c.material.map.repeat.set(uVal, vVal);
+                        c.material.map.needsUpdate = true;
                     }
                 });
             });
-            showStatus("Applied Custom Texture!");
-        });
-    };
+        };
+    });
 
-    document.getElementById('prop-texscale').oninput = (e) => {
-        setTextureRepeatScale(parseFloat(e.target.value));
-    };
+    // UV Offset
+    ['prop-off-u', 'prop-off-v'].forEach((id, idx) => {
+        document.getElementById(id).onchange = () => {
+            saveState();
+            const uOff = parseFloat(document.getElementById('prop-off-u').value) || 0;
+            const vOff = parseFloat(document.getElementById('prop-off-v').value) || 0;
+
+            state.selectedObjects.forEach(obj => {
+                obj.traverse(c => {
+                    if (c.isMesh && c.material.map) {
+                        c.material.map.offset.set(uOff, vOff);
+                        c.material.map.needsUpdate = true;
+                    }
+                });
+            });
+        };
+    });
 
     document.getElementById('prop-locked').onchange = (e) => {
         const val = e.target.checked;
