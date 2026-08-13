@@ -2,6 +2,9 @@ import * as THREE from 'three';
 
 export const materialTextureLibrary = {};
 export const fileBlobMap = new Map();
+export const fileToAssetIdMap = new Map();
+export const blobUrlToAssetIdMap = new Map();
+export const assetIdToDisplayNameMap = new Map();
 
 function createDummyDataURL() {
     const canvas = document.createElement('canvas');

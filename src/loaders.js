@@ -3,12 +3,78 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { state } from './state.js';
 import { scene, camera } from './scene.js';
 import { saveModelToDB, saveTextureToDB } from './db.js';
-import { DUMMY_WHITE_PIXEL, materialTextureLibrary, fileBlobMap } from './materials.js';
+import { DUMMY_WHITE_PIXEL, materialTextureLibrary, fileBlobMap, fileToAssetIdMap, blobUrlToAssetIdMap, assetIdToDisplayNameMap } from './materials.js';
 import { selectMultipleObjects } from './selection.js';
 import { updateExplorer, showStatus, saveState } from './ui.js';
 
 let sharedThumbRenderer = null;
 const textureLoader = new THREE.TextureLoader();
+
+// Helper to create or fetch a collapsible folder section in the Toolbox UI
+export function getOrCreateToolboxFolderSection(folderName) {
+    const toolboxList = document.getElementById('toolbox-list');
+    if (!toolboxList) return null;
+
+    const safeId = 'folder-section-' + folderName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+    let sectionEl = document.getElementById(safeId);
+
+    if (!sectionEl) {
+        sectionEl = document.createElement('div');
+        sectionEl.id = safeId;
+        sectionEl.className = 'toolbox-folder-section';
+        sectionEl.style.marginBottom = '8px';
+        sectionEl.innerHTML = `
+            <div class="folder-header" style="background:#2d2d2d; border:1px solid #3c3c3c; padding:6px 10px; color:#00a2ff; font-weight:bold; font-size:11px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-radius:4px;">
+                <span>📁 ${folderName}</span>
+                <span class="folder-toggle" style="font-size:10px; color:#888;">▼</span>
+            </div>
+            <div class="folder-content" style="padding:4px 0 0 4px; display:block;"></div>
+        `;
+        
+        sectionEl.querySelector('.folder-header').onclick = () => {
+            const content = sectionEl.querySelector('.folder-content');
+            const toggle = sectionEl.querySelector('.folder-toggle');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                toggle.innerText = '▼';
+            } else {
+                content.style.display = 'none';
+                toggle.innerText = '▶';
+            }
+        };
+        toolboxList.appendChild(sectionEl);
+    }
+    return sectionEl.querySelector('.folder-content');
+}
+
+// Math-based relative path resolver that resolves relative directory pointers (e.g. "../" or "./")
+export function resolveRelativePath(baseDir, relativePath) {
+    const absoluteParts = baseDir.split('/').filter(Boolean);
+    const relParts = relativePath.split('/');
+    for (let part of relParts) {
+        if (part === '..') {
+            absoluteParts.pop();
+        } else if (part !== '.' && part !== '') {
+            absoluteParts.push(part);
+        }
+    }
+    return absoluteParts.join('/');
+}
+
+// Deep clone materials so models do not share reference states
+export function cloneModelWithMaterials(sourceModel) {
+    const clone = sourceModel.clone();
+    clone.traverse(c => {
+        if (c.isMesh && c.material) {
+            if (Array.isArray(c.material)) {
+                c.material = c.material.map(mat => mat.clone());
+            } else {
+                c.material = c.material.clone();
+            }
+        }
+    });
+    return clone;
+}
 
 export function getSpawnPositionForNewObject(objectToSpawn) {
     const raycaster = new THREE.Raycaster();
@@ -67,7 +133,7 @@ export function generateModelThumbnail(model) {
         light.position.set(5, 10, 7);
         thumbScene.add(light);
 
-        const clone = model.clone();
+        const clone = cloneModelWithMaterials(model);
         thumbScene.add(clone);
 
         const box = new THREE.Box3().setFromObject(clone);
@@ -86,10 +152,23 @@ export function generateModelThumbnail(model) {
     }
 }
 
+export function getBase64FromImage(image) {
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = image.width || image.naturalWidth || 256;
+        canvas.height = image.height || image.naturalHeight || 256;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0);
+        return canvas.toDataURL('image/png');
+    } catch(e) {
+        console.warn("Base64 extraction failed:", e);
+        return null;
+    }
+}
+
 export function processImportedFiles(files) {
     if (!files || files.length === 0) return;
 
-    const toolboxList = document.getElementById('toolbox-list');
     const fileList = Array.from(files);
     const glbFiles = [];
     const imageFiles = [];
@@ -119,105 +198,299 @@ export function processImportedFiles(files) {
         }
     });
 
-    glbFiles.forEach(file => {
-        const cleanName = file.name.replace(/\.(glb|gltf)$/i, '');
-        const reader = new FileReader();
+    let pendingImages = imageFiles.length;
 
-        reader.onload = function(e) {
-            const arrayBuffer = e.target.result;
-            saveModelToDB(cleanName, arrayBuffer);
+    const proceedToGLBLoading = () => {
+        let pendingModels = glbFiles.length;
+        const checkFinished = () => {
+            pendingModels--;
+            if (pendingModels <= 0) {
+                setTimeout(() => {
+                    repairSceneTextures();
+                }, 100);
+            }
+        };
 
-            const customGltfLoader = new GLTFLoader();
+        if (pendingModels === 0) {
+            setTimeout(() => { repairSceneTextures(); }, 100);
+            return;
+        }
 
-            customGltfLoader.parse(
-                arrayBuffer,
-                '/',
-                (gltf) => {
-                    const model = gltf.scene;
-                    model.name = cleanName;
-                    state.loadedModels[model.name] = model;
+        glbFiles.forEach(file => {
+            // FIX: Use full directory path context as key to isolate namespaces
+            let fileRelPath = file.webkitRelativePath || file.name;
+            fileRelPath = fileRelPath.replace(/\\/g, '/');
+            const cleanPathId = fileRelPath.toLowerCase().replace(/\.(glb|gltf)$/i, '');
+            const cleanDisplayName = file.name.replace(/\.(glb|gltf)$/i, '');
 
-                    const thumbDataUrl = generateModelThumbnail(model);
+            const lastSlash = fileRelPath.lastIndexOf('/');
+            const baseDir = lastSlash !== -1 ? fileRelPath.substring(0, lastSlash + 1) : "";
 
-                    const item = document.createElement('div');
-                    item.className = 'asset-item';
-                    item.innerHTML = `
-                        ${thumbDataUrl ? `<img class="asset-thumb" src="${thumbDataUrl}" alt="${model.name}">` : `<div class="asset-thumb" style="display:flex;align-items:center;justify-content:center;color:#00a2ff;font-size:18px;">📦</div>`}
-                        <div style="flex:1; overflow:hidden;">
-                            <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${model.name}</div>
-                            <div style="font-size:9px; color:#aaa;">3D Model (.glb)</div>
-                        </div>
-                        <span style="color:#00a2ff; font-weight:bold;">+ Add</span>
-                    `;
-                    item.onclick = () => spawnModel(model.name);
-                    toolboxList.appendChild(item);
-                    showStatus("Loaded Model: " + model.name);
-                },
-                (err) => {
-                    const fallbackLoader = new GLTFLoader();
-                    fallbackLoader.parse(arrayBuffer, '', (gltf) => {
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+
+                // Save using the unique relative path as ID
+                saveModelToDB(cleanPathId, arrayBuffer, baseDir);
+
+                const localManager = new THREE.LoadingManager();
+                localManager.setURLModifier((url) => {
+                    if (!url) return url;
+                    const cleanUrl = decodeURIComponent(url).replace(/\\/g, '/').toLowerCase();
+                    const fileName = cleanUrl.split('/').pop().split('?')[0];
+
+                    const localResolvedPath = resolveRelativePath(baseDir, cleanUrl).toLowerCase();
+                    
+                    if (fileToAssetIdMap.has(localResolvedPath)) {
+                        const assetId = fileToAssetIdMap.get(localResolvedPath);
+                        if (fileBlobMap.has(assetId)) {
+                            const resolvedUrl = fileBlobMap.get(assetId);
+                            blobUrlToAssetIdMap.set(resolvedUrl, assetId);
+                            return resolvedUrl;
+                        }
+                    }
+                    if (fileToAssetIdMap.has(cleanUrl)) {
+                        const assetId = fileToAssetIdMap.get(cleanUrl);
+                        if (fileBlobMap.has(assetId)) {
+                            const resolvedUrl = fileBlobMap.get(assetId);
+                            blobUrlToAssetIdMap.set(resolvedUrl, assetId);
+                            return resolvedUrl;
+                        }
+                    }
+                    if (fileToAssetIdMap.has(fileName)) {
+                        const assetId = fileToAssetIdMap.get(fileName);
+                        if (fileBlobMap.has(assetId)) {
+                            const resolvedUrl = fileBlobMap.get(assetId);
+                            blobUrlToAssetIdMap.set(resolvedUrl, assetId);
+                            return resolvedUrl;
+                        }
+                    }
+
+                    if (url.match(/\.(png|jpg|jpeg|webp)$/i) || url.includes('Textures/')) {
+                        return DUMMY_WHITE_PIXEL;
+                    }
+
+                    return url;
+                });
+
+                const customGltfLoader = new GLTFLoader(localManager);
+
+                customGltfLoader.parse(
+                    arrayBuffer,
+                    '/',
+                    (gltf) => {
                         const model = gltf.scene;
-                        model.name = cleanName;
-                        state.loadedModels[model.name] = model;
+                        model.name = cleanPathId;
+                        state.loadedModels[cleanPathId] = model;
+
+                        model.traverse(c => {
+                            if (c.isMesh) {
+                                c.castShadow = true;
+                                c.receiveShadow = true;
+                                if (c.material) {
+                                    const mats = Array.isArray(c.material) ? c.material : [c.material];
+                                    mats.forEach(mat => {
+                                        if (mat.map && mat.map.image) {
+                                            const imgSrc = mat.map.image.src;
+                                            let assetId;
+                                            if (blobUrlToAssetIdMap.has(imgSrc)) {
+                                                assetId = blobUrlToAssetIdMap.get(imgSrc);
+                                            } else {
+                                                assetId = "tex_" + THREE.MathUtils.generateUUID();
+                                                fileToAssetIdMap.set(assetId, assetId);
+                                                blobUrlToAssetIdMap.set(imgSrc, assetId);
+                                            }
+
+                                            mat.userData.textureAssetId = assetId;
+                                            c.userData.textureAssetId = assetId;
+
+                                            const img = mat.map.image;
+                                            const handleImageExtraction = () => {
+                                                const base64 = getBase64FromImage(img);
+                                                if (base64) {
+                                                    state.textureData[assetId] = base64;
+                                                    saveTextureToDB(assetId, base64, "image/png", assetId);
+                                                }
+                                            };
+
+                                            if (typeof ImageBitmap !== "undefined" && img instanceof ImageBitmap) {
+                                                handleImageExtraction();
+                                            } else if (img.complete && img.naturalWidth > 0) {
+                                                handleImageExtraction();
+                                            } else {
+                                                img.addEventListener('load', handleImageExtraction);
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        });
+
+                        const thumbDataUrl = generateModelThumbnail(model);
+
+                        // FIX: Generate the dynamic collapsible sections in the Toolbox UI
+                        const parts = cleanPathId.split('/');
+                        const folderName = parts.length > 1 ? parts.slice(0, -1).join('/') : "Loose Files";
+                        const folderContent = getOrCreateToolboxFolderSection(folderName);
+
                         const item = document.createElement('div');
                         item.className = 'asset-item';
                         item.innerHTML = `
-                            <div class="asset-thumb" style="display:flex;align-items:center;justify-content:center;color:#00a2ff;font-size:18px;">📦</div>
+                            ${thumbDataUrl ? `<img class="asset-thumb" src="${thumbDataUrl}" alt="${cleanDisplayName}">` : `<div class="asset-thumb" style="display:flex;align-items:center;justify-content:center;color:#00a2ff;font-size:18px;">📦</div>`}
                             <div style="flex:1; overflow:hidden;">
-                                <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${model.name}</div>
+                                <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${cleanDisplayName}</div>
                                 <div style="font-size:9px; color:#aaa;">3D Model (.glb)</div>
                             </div>
                             <span style="color:#00a2ff; font-weight:bold;">+ Add</span>
                         `;
-                        item.onclick = () => spawnModel(model.name);
-                        toolboxList.appendChild(item);
-                    });
+                        item.onclick = () => spawnModel(cleanPathId);
+                        if (folderContent) folderContent.appendChild(item);
+
+                        showStatus("Loaded Model: " + cleanDisplayName);
+                        checkFinished();
+                    },
+                    (err) => {
+                        const fallbackLoader = new GLTFLoader(localManager);
+                        fallbackLoader.parse(arrayBuffer, '', (gltf) => {
+                            const model = gltf.scene;
+                            model.name = cleanPathId;
+                            state.loadedModels[cleanPathId] = model;
+                            
+                            model.traverse(c => {
+                                if (c.isMesh) {
+                                    c.castShadow = true;
+                                    c.receiveShadow = true;
+                                    if (c.material) {
+                                        const mats = Array.isArray(c.material) ? c.material : [c.material];
+                                        mats.forEach(mat => {
+                                            if (mat.map && mat.map.image) {
+                                                const imgSrc = mat.map.image.src;
+                                                let assetId;
+                                                if (blobUrlToAssetIdMap.has(imgSrc)) {
+                                                    assetId = blobUrlToAssetIdMap.get(imgSrc);
+                                                } else {
+                                                    assetId = "tex_" + THREE.MathUtils.generateUUID();
+                                                    fileToAssetIdMap.set(assetId, assetId);
+                                                    blobUrlToAssetIdMap.set(imgSrc, assetId);
+                                                }
+
+                                                mat.userData.textureAssetId = assetId;
+                                                c.userData.textureAssetId = assetId;
+
+                                                const img = mat.map.image;
+                                                const handleImageExtraction = () => {
+                                                    const base64 = getBase64FromImage(img);
+                                                    if (base64) {
+                                                        state.textureData[assetId] = base64;
+                                                        saveTextureToDB(assetId, base64, "image/png", assetId);
+                                                    }
+                                                };
+
+                                                if (typeof ImageBitmap !== "undefined" && img instanceof ImageBitmap) {
+                                                    handleImageExtraction();
+                                                } else if (img.complete && img.naturalWidth > 0) {
+                                                    handleImageExtraction();
+                                                } else {
+                                                    img.addEventListener('load', handleImageExtraction);
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                            });
+
+                            const parts = cleanPathId.split('/');
+                            const folderName = parts.length > 1 ? parts.slice(0, -1).join('/') : "Loose Files";
+                            const folderContent = getOrCreateToolboxFolderSection(folderName);
+
+                            const item = document.createElement('div');
+                            item.className = 'asset-item';
+                            item.innerHTML = `
+                                <div class="asset-thumb" style="display:flex;align-items:center;justify-content:center;color:#00a2ff;font-size:18px;">📦</div>
+                                <div style="flex:1; overflow:hidden;">
+                                    <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${cleanDisplayName}</div>
+                                    <div style="font-size:9px; color:#aaa;">3D Model (.glb)</div>
+                                </div>
+                                <span style="color:#00a2ff; font-weight:bold;">+ Add</span>
+                            `;
+                            item.onclick = () => spawnModel(cleanPathId);
+                            if (folderContent) folderContent.appendChild(item);
+                            checkFinished();
+                        }, () => checkFinished());
+                    }
+                );
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+    };
+
+    if (pendingImages === 0) {
+        proceedToGLBLoading();
+    } else {
+        imageFiles.forEach(file => {
+            const nameLower = file.name.toLowerCase();
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const base64Data = e.target.result;
+                
+                let storageName = file.webkitRelativePath || file.name;
+                storageName = storageName.replace(/\\/g, '/');
+
+                const assetId = "tex_" + THREE.MathUtils.generateUUID();
+
+                state.textureData[assetId] = base64Data;
+                saveTextureToDB(assetId, base64Data, file.type, storageName);
+
+                fileToAssetIdMap.set(storageName.toLowerCase(), assetId);
+                
+                if (!storageName.includes('/')) {
+                    fileToAssetIdMap.set(nameLower, assetId);
                 }
-            );
-        };
+                
+                assetIdToDisplayNameMap.set(assetId, storageName);
 
-        reader.readAsArrayBuffer(file);
-    });
+                fileBlobMap.set(assetId, base64Data);
+                blobUrlToAssetIdMap.set(base64Data, assetId);
 
-    imageFiles.forEach(file => {
-        const nameLower = file.name.toLowerCase();
-        const reader = new FileReader();
+                textureLoader.load(base64Data, (texture) => {
+                    texture.wrapS = THREE.RepeatWrapping;
+                    texture.wrapT = THREE.RepeatWrapping;
+                    state.loadedTextures[assetId] = texture;
 
-        reader.onload = function(e) {
-            const arrayBuffer = e.target.result;
-            saveTextureToDB(file.name, arrayBuffer, file.type);
+                    if (storageName.toLowerCase().includes('skybox')) {
+                        const toolboxList = document.getElementById('toolbox-list');
+                        const item = document.createElement('div');
+                        item.className = 'asset-item';
+                        item.style.borderColor = '#28a745';
+                        item.innerHTML = `
+                            <img class="asset-thumb" src="${base64Data}" alt="${file.name}">
+                            <div style="flex:1; overflow:hidden;">
+                                <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${file.name}</div>
+                                <div style="font-size:9px; color:#28a745;">Skybox Image</div>
+                            </div>
+                            <span style="color:#28a745; font-weight:bold;">Set Sky</span>
+                        `;
+                        item.onclick = () => { scene.background = texture; scene.environment = texture; };
+                        if (toolboxList) toolboxList.appendChild(item);
+                    }
+                    pendingImages--;
+                    if (pendingImages <= 0) {
+                        proceedToGLBLoading();
+                    }
+                }, undefined, () => {
+                    pendingImages--;
+                    if (pendingImages <= 0) {
+                        proceedToGLBLoading();
+                    }
+                });
+            };
 
-            const blob = new Blob([arrayBuffer], { type: file.type });
-            const fileURL = URL.createObjectURL(blob);
-
-            fileBlobMap.set(nameLower, fileURL);
-            fileBlobMap.set(file.name, fileURL);
-
-            textureLoader.load(fileURL, (texture) => {
-                texture.wrapS = THREE.RepeatWrapping;
-                texture.wrapT = THREE.RepeatWrapping;
-                state.loadedTextures[file.name] = texture;
-
-                if (nameLower.includes('skybox')) {
-                    const item = document.createElement('div');
-                    item.className = 'asset-item';
-                    item.style.borderColor = '#28a745';
-                    item.innerHTML = `
-                        <img class="asset-thumb" src="${fileURL}" alt="${file.name}">
-                        <div style="flex:1; overflow:hidden;">
-                            <div style="font-weight:bold; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${file.name}</div>
-                            <div style="font-size:9px; color:#28a745;">Skybox Image</div>
-                        </div>
-                        <span style="color:#28a745; font-weight:bold;">Set Sky</span>
-                    `;
-                    item.onclick = () => { scene.background = texture; scene.environment = texture; };
-                    toolboxList.appendChild(item);
-                }
-            });
-        };
-
-        reader.readAsArrayBuffer(file);
-    });
+            reader.readAsDataURL(file);
+        });
+    }
 }
 
 export function handleFileSelect(event) {
@@ -226,12 +499,25 @@ export function handleFileSelect(event) {
 
 export function spawnModel(modelName) {
     if (!state.loadedModels[modelName]) return;
-    const model = state.loadedModels[modelName].clone();
+    saveState();
+    const model = cloneModelWithMaterials(state.loadedModels[modelName]);
     model.name = modelName + "_" + (state.placedObjects.length + 1);
     model.userData = { locked: false, anchored: true, canCollide: true, modelType: modelName };
 
     model.traverse(c => {
-        if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
+        if (c.isMesh) { 
+            c.castShadow = true; 
+            c.receiveShadow = true; 
+            
+            if (c.material) {
+                const mats = Array.isArray(c.material) ? c.material : [c.material];
+                mats.forEach(mat => {
+                    if (mat.userData && mat.userData.textureAssetId) {
+                        c.userData.textureAssetId = mat.userData.textureAssetId;
+                    }
+                });
+            }
+        }
     });
 
     const spawnPos = getSpawnPositionForNewObject(model);
@@ -242,10 +528,10 @@ export function spawnModel(modelName) {
 
     selectMultipleObjects([model]);
     updateExplorer();
-    saveState();
 }
 
 export function insertPrimitive(type) {
+    saveState();
     let geo, mat = new THREE.MeshStandardMaterial({ color: 0xa3a2a5, roughness: 0.5 });
     if (type === 'Block') geo = new THREE.BoxGeometry(2, 2, 2);
     if (type === 'Sphere') geo = new THREE.SphereGeometry(1.5, 32, 32);
@@ -264,7 +550,6 @@ export function insertPrimitive(type) {
 
     selectMultipleObjects([mesh]);
     updateExplorer();
-    saveState();
 }
 
 export function applyMaterialToSelected(matName) {
@@ -299,4 +584,81 @@ export function setTextureRepeatScale(scaleVal) {
             }
         });
     });
+}
+
+export function repairSceneTextures() {
+    let repairedCount = 0;
+
+    state.placedObjects.forEach(obj => {
+        obj.traverse(activeChild => {
+            if (!activeChild.isMesh) return;
+
+            let ancestor = activeChild;
+            let modelType = null;
+            while (ancestor) {
+                if (ancestor.userData && ancestor.userData.modelType) {
+                    modelType = ancestor.userData.modelType;
+                    break;
+                }
+                ancestor = ancestor.parent;
+            }
+
+            if (modelType && state.loadedModels[modelType]) {
+                const template = state.loadedModels[modelType];
+                let templateChild = null;
+
+                template.traverse(tChild => {
+                    if (tChild.isMesh && tChild.name === activeChild.name) {
+                        templateChild = tChild;
+                    }
+                });
+
+                if (!templateChild) {
+                    let activeIndex = -1;
+                    let idx = 0;
+                    const activeAncestor = ancestor || activeChild;
+                    activeAncestor.traverse(node => {
+                        if (node === activeChild) activeIndex = idx;
+                        if (node.isMesh) idx++;
+                    });
+
+                    idx = 0;
+                    template.traverse(node => {
+                        if (node.isMesh) {
+                            if (idx === activeIndex) templateChild = node;
+                            idx++;
+                        }
+                    });
+                }
+
+                if (templateChild && templateChild.isMesh) {
+                    if (templateChild.material) {
+                        if (Array.isArray(templateChild.material)) {
+                            activeChild.material = templateChild.material.map(m => m.clone());
+                        } else {
+                            activeChild.material = templateChild.material.clone();
+                        }
+                        activeChild.material.needsUpdate = true;
+
+                        if (templateChild.userData && templateChild.userData.textureAssetId) {
+                            activeChild.userData.textureAssetId = templateChild.userData.textureAssetId;
+                            
+                            const activeMats = Array.isArray(activeChild.material) ? activeChild.material : [activeChild.material];
+                            activeMats.forEach(m => {
+                                m.userData.textureAssetId = templateChild.userData.textureAssetId;
+                            });
+                        }
+                        repairedCount++;
+                    }
+                }
+            }
+        });
+    });
+
+    if (repairedCount > 0) {
+        showStatus(`Repaired materials/textures for ${repairedCount} parts!`);
+        saveState();
+    } else {
+        console.log("No repairable structures found in viewport.");
+    }
 }

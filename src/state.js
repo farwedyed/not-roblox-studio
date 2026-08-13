@@ -8,8 +8,10 @@ export const state = {
     selectedObjects: [],
     selectedObject: null,
     isLightingSelected: false,
-    isRestoring: true, // Protection lock during page startup!
+    isRestoring: true,
     currentTool: 'select',
+    
+    textureData: {},
     
     lightingSettings: {
         clockTime: 14,
@@ -35,7 +37,6 @@ export function serializeObject(obj, scene) {
 
     const isInsideTempPivot = (obj.parent && obj.parent.name === "TempMultiPivot");
     
-    // Fallback to original parent reference if currently inside multiselection
     const parentRef = isInsideTempPivot 
         ? (obj.userData.originalParent && obj.userData.originalParent !== scene ? obj.userData.originalParent : null) 
         : ((obj.parent && obj.parent !== scene) ? obj.parent : null);
@@ -43,7 +44,23 @@ export function serializeObject(obj, scene) {
     const parentUuid = parentRef ? parentRef.uuid : null;
     const parentName = parentRef ? parentRef.name : null;
 
-    let mapTexName = obj.userData ? (obj.userData.textureName || null) : null;
+    let textureAssetId = null;
+    
+    obj.traverse(c => {
+        if (c.isMesh && c.material) {
+            const mats = Array.isArray(c.material) ? c.material : [c.material];
+            mats.forEach(m => {
+                if (m.userData && m.userData.textureAssetId) {
+                    textureAssetId = m.userData.textureAssetId;
+                }
+            });
+        }
+    });
+
+    if (!textureAssetId && obj.userData && obj.userData.textureAssetId) {
+        textureAssetId = obj.userData.textureAssetId;
+    }
+
     let repeatU = 1, repeatV = 1;
     let offsetU = 0, offsetV = 0;
 
@@ -75,7 +92,9 @@ export function serializeObject(obj, scene) {
         objectType: objectType,
         modelType: obj.userData ? (obj.userData.modelType || null) : null,
         materialName: obj.userData ? (obj.userData.materialName || "Plastic") : "Plastic",
-        textureName: mapTexName,
+        textureAssetId: textureAssetId,
+        hasCustomTexture: obj.userData ? !!obj.userData.hasCustomTexture : false,
+        textureName: obj.userData ? (obj.userData.textureName || null) : null,
         textureRepeat: { u: repeatU, v: repeatV },
         textureOffset: { u: offsetU, v: offsetV },
         isPrimitive: obj.userData ? !!obj.userData.isPrimitive : (objectType === "Primitive"),

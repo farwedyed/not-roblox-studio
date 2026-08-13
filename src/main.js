@@ -1,23 +1,20 @@
 import { state } from './state.js';
 import { initScene, animate } from './scene.js';
-import { initDB, loadSavedModelsFromDB, loadSavedTexturesFromDB, clearAllSavedData } from './db.js';
+import { initDB, loadSavedModelsFromDB, loadSavedTexturesFromDB, clearAllSavedData, cleanupCollidingTextures } from './db.js';
 import { setTool, updateSnapSettings, snapSelectedToGround, focusCamera, groupSelected, ungroupSelected, deleteSelected, duplicateSelected, toggleLockSelected, setupControlListeners, undo, redo } from './controls.js';
 import { insertPrimitive } from './loaders.js';
 import { exportMapJSON, checkAndRestoreAutoSave, autoSaveMap, hideContextMenu, saveState } from './ui.js';
 import { setupGlobalLoadingManager } from './materials.js';
 
 function bindUIButtons() {
-    // Ribbon Tools
     document.getElementById('tool-select').onclick = () => setTool('select');
     document.getElementById('tool-translate').onclick = () => setTool('translate');
     document.getElementById('tool-scale').onclick = () => setTool('scale');
     document.getElementById('tool-rotate').onclick = () => setTool('rotate');
 
-    // Primitives
     document.getElementById('btn-part-block').onclick = () => insertPrimitive('Block');
     document.getElementById('btn-part-sphere').onclick = () => insertPrimitive('Sphere');
 
-    // Action Buttons
     document.getElementById('btn-drop-ground').onclick = () => snapSelectedToGround();
     document.getElementById('btn-undo').onclick = () => undo();
     document.getElementById('btn-redo').onclick = () => redo();
@@ -29,7 +26,6 @@ function bindUIButtons() {
     document.getElementById('btn-export').onclick = () => exportMapJSON();
     document.getElementById('btn-clear-autosave').onclick = () => clearAllSavedData();
 
-    // Context Menu Buttons
     document.getElementById('ctx-duplicate').onclick = () => { duplicateSelected(); hideContextMenu(); };
     document.getElementById('ctx-group').onclick = () => { groupSelected(); hideContextMenu(); };
     document.getElementById('ctx-ungroup').onclick = () => { ungroupSelected(); hideContextMenu(); };
@@ -45,18 +41,20 @@ window.addEventListener('DOMContentLoaded', () => {
     bindUIButtons();
     setupControlListeners();
 
-    // Instant save when user refreshes or closes the page!
     window.addEventListener('beforeunload', () => {
         if (!state.isRestoring) autoSaveMap();
     });
 
     initDB().then(() => {
+        return cleanupCollidingTextures();
+    }).then(() => {
         return loadSavedTexturesFromDB();
     }).then(() => {
         return loadSavedModelsFromDB();
     }).then(() => {
-        checkAndRestoreAutoSave();
-        // Capture initial baseline baseline state to the undo stack
+        // Sequenced with a clean Promise resolve to prevent frame 1 autosave overwrites
+        return checkAndRestoreAutoSave();
+    }).then(() => {
         saveState();
     }).catch(err => {
         console.error("Startup restore error:", err);
@@ -64,6 +62,31 @@ window.addEventListener('DOMContentLoaded', () => {
         saveState();
     });
 
-    setInterval(autoSaveMap, 10000); // Auto-save every 10 seconds!
+    window.repairTextures = () => {
+        import('./loaders.js').then(m => {
+            m.repairSceneTextures();
+        });
+    };
+
+    window.purgeBlackTextures = () => {
+        import('./state.js').then(stateMod => {
+            const s = stateMod.state;
+            delete s.loadedTextures["palette.png"];
+            delete s.loadedTextures["colormap.png"];
+            delete s.loadedTextures["texture.png"];
+            if (s.textureData) {
+                delete s.textureData["palette.png"];
+                delete s.textureData["colormap.png"];
+                delete s.textureData["texture.png"];
+            }
+            import('./db.js').then(dbMod => {
+                dbMod.cleanupCollidingTextures().then(() => {
+                    alert("Purge complete! The legacy black textures are gone from your database and memory.\n\nNow, simply drag-and-drop your asset folders to reload the correct colorful textures!");
+                });
+            });
+        });
+    };
+
+    setInterval(autoSaveMap, 10000);
     animate();
 });

@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { state, serializeObject, getSerializableObjects } from './state.js';
 import { scene, transformControls, selectionBox, updateLighting, updateRobloxScaleGizmoPositions } from './scene.js';
 import { selectObject, selectMultipleObjects, selectLightingService, clearMultiPivot } from './selection.js';
-import { applyMaterialToSelected, setTextureRepeatScale } from './loaders.js';
+import { applyMaterialToSelected, setTextureRepeatScale, cloneModelWithMaterials } from './loaders.js';
 import { saveTextureToDB } from './db.js';
-import { materialTextureLibrary } from './materials.js';
+import { materialTextureLibrary, assetIdToDisplayNameMap } from './materials.js';
 
 const textureLoader = new THREE.TextureLoader();
 
@@ -14,12 +14,35 @@ function bindEvent(id, eventName, callback) {
 }
 
 export function autoSaveMap() {
-    if (state.isRestoring) return; // Blocked if clearing or restoring!
+    if (state.isRestoring) return;
     if (!state.placedObjects || state.placedObjects.length === 0) return;
     try {
         const serializable = getSerializableObjects();
+        const texturesUsed = {};
+        
+        serializable.forEach(obj => {
+            let textureAssetId = null;
+            obj.traverse(c => {
+                if (c.isMesh && c.material) {
+                    const mats = Array.isArray(c.material) ? c.material : [c.material];
+                    mats.forEach(m => {
+                        if (m.userData && m.userData.textureAssetId) {
+                            textureAssetId = m.userData.textureAssetId;
+                        }
+                    });
+                }
+            });
+            if (!textureAssetId && obj.userData && obj.userData.textureAssetId) {
+                textureAssetId = obj.userData.textureAssetId;
+            }
+            if (textureAssetId && state.textureData[textureAssetId]) {
+                texturesUsed[textureAssetId] = state.textureData[textureAssetId];
+            }
+        });
+
         const exportData = {
             lighting: { ...state.lightingSettings },
+            textures: texturesUsed,
             objects: serializable.map(o => serializeObject(o, scene))
         };
         localStorage.setItem('studio_editor_autosave', JSON.stringify(exportData));
@@ -27,29 +50,67 @@ export function autoSaveMap() {
 }
 
 export function checkAndRestoreAutoSave() {
-    const saved = localStorage.getItem('studio_editor_autosave');
-    if (saved) {
-        try {
-            const data = JSON.parse(saved);
-            if (data.objects && data.objects.length > 0) {
-                restoreState(JSON.stringify(data.objects));
-                if (data.lighting) Object.assign(state.lightingSettings, data.lighting);
-                updateLighting();
-                showStatus(`Restored Auto-Save (${data.objects.length} Objects)`);
+    return new Promise((resolve) => {
+        const saved = localStorage.getItem('studio_editor_autosave');
+        if (saved) {
+            try {
+                const data = JSON.parse(saved);
+                if (data.objects && data.objects.length > 0) {
+                    restoreState(JSON.stringify(data)).then(() => {
+                        if (data.lighting) Object.assign(state.lightingSettings, data.lighting);
+                        updateLighting();
+                        showStatus(`Restored Auto-Save (${data.objects.length} Objects)`);
+                        state.isRestoring = false;
+                        resolve();
+                    }).catch((err) => {
+                        console.error("Restoring failed:", err);
+                        state.isRestoring = false;
+                        resolve();
+                    });
+                    return;
+                }
+            } catch(e) {
+                console.error("Auto-save restore error:", e);
             }
-        } catch(e) {
-            console.error("Auto-save restore error:", e);
         }
-    }
-    state.isRestoring = false; // Restoration complete, enable normal auto-saving!
+        state.isRestoring = false;
+        resolve();
+    });
 }
 
 export function saveState() {
     if (state.isRestoring) return;
     if (!state.placedObjects) return;
     const serializable = getSerializableObjects();
+    const texturesUsed = {};
+    
+    serializable.forEach(obj => {
+        let textureAssetId = null;
+        obj.traverse(c => {
+            if (c.isMesh && c.material) {
+                const mats = Array.isArray(c.material) ? c.material : [c.material];
+                mats.forEach(m => {
+                    if (m.userData && m.userData.textureAssetId) {
+                        textureAssetId = m.userData.textureAssetId;
+                    }
+                });
+            }
+        });
+        if (!textureAssetId && obj.userData && obj.userData.textureAssetId) {
+            textureAssetId = obj.userData.textureAssetId;
+        }
+        if (textureAssetId && state.textureData[textureAssetId]) {
+            texturesUsed[textureAssetId] = state.textureData[textureAssetId];
+        }
+    });
+
     const snapshot = serializable.map(o => serializeObject(o, scene));
-    const jsonStr = JSON.stringify(snapshot);
+    const exportData = {
+        lighting: { ...state.lightingSettings },
+        textures: texturesUsed,
+        objects: snapshot
+    };
+    const jsonStr = JSON.stringify(exportData);
 
     if (state.undoStack.length > 0 && state.undoStack[state.undoStack.length - 1] === jsonStr) {
         return;
@@ -76,135 +137,202 @@ export function redo() {
 }
 
 export function restoreState(jsonState) {
-    const data = JSON.parse(jsonState);
+    let data = [];
+    let embeddedTextures = {};
 
-    clearMultiPivot();
+    try {
+        const parsed = JSON.parse(jsonState);
+        if (parsed.objects) {
+            data = parsed.objects;
+            embeddedTextures = parsed.textures || {};
+        } else {
+            data = parsed;
+        }
+    } catch(e) {
+        return Promise.resolve();
+    }
 
-    if (transformControls) transformControls.detach();
-    if (selectionBox) selectionBox.visible = false;
-    updateRobloxScaleGizmoPositions(null);
-    state.selectedObjects = [];
-    state.selectedObject = null;
-
-    state.placedObjects.forEach(o => {
-        scene.remove(o);
-        o.traverse(c => {
-            if (c.geometry) c.geometry.dispose();
-            if (c.material) {
-                if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
-                else c.material.dispose();
+    const textKeys = Object.keys(embeddedTextures);
+    const loadEmbeddedPromises = textKeys.map(assetId => {
+        return new Promise((res) => {
+            if (state.loadedTextures[assetId]) {
+                return res();
             }
+            const base64Data = embeddedTextures[assetId];
+            state.textureData[assetId] = base64Data;
+            
+            saveTextureToDB(assetId, base64Data, "image/png", assetId);
+
+            textureLoader.load(base64Data, (tex) => {
+                tex.wrapS = THREE.RepeatWrapping;
+                tex.wrapT = THREE.RepeatWrapping;
+                state.loadedTextures[assetId] = tex;
+                res();
+            }, undefined, () => res());
         });
     });
-    state.placedObjects = [];
 
-    const objectMap = new Map();
+    return Promise.all(loadEmbeddedPromises).then(() => {
+        clearMultiPivot();
 
-    data.forEach(item => {
-        let obj;
-        const safeColor = (item.color && typeof item.color === 'string') ? parseInt(item.color.replace('#', '0x')) : 0xa3a2a5;
+        if (transformControls) transformControls.detach();
+        if (selectionBox) selectionBox.visible = false;
+        updateRobloxScaleGizmoPositions(null);
+        state.selectedObjects = [];
+        state.selectedObject = null;
 
-        if (item.objectType === "Baseplate" || item.name === "Baseplate" || item.isBaseplate) {
-            const geo = new THREE.BoxGeometry(100, 1, 100);
-            const mat = new THREE.MeshStandardMaterial({ 
-                color: safeColor, 
-                map: materialTextureLibrary["Studs"],
-                roughness: item.roughness || 0.35, 
-                metalness: 0.1 
-            });
-            if (mat.map) mat.map.repeat.set(25, 25);
-            obj = new THREE.Mesh(geo, mat);
-            obj.userData = { locked: true, anchored: true, canCollide: true, materialName: "Studs" };
-        } else if ((item.objectType === "GLTFModel" || item.modelType) && item.modelType && state.loadedModels[item.modelType]) {
-            obj = state.loadedModels[item.modelType].clone();
-            obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
-            obj.userData = { locked: !!item.locked, anchored: !!item.anchored, canCollide: !!item.canCollide, modelType: item.modelType };
-        } else if (item.objectType === "Primitive" || item.isPrimitive || item.primitiveType) {
-            const pType = item.primitiveType || 'Block';
-            let geo = pType === 'Sphere' ? new THREE.SphereGeometry(1.5, 32, 32) : new THREE.BoxGeometry(2, 2, 2);
-            const mat = new THREE.MeshStandardMaterial({ color: safeColor, roughness: item.roughness || 0.5 });
-            obj = new THREE.Mesh(geo, mat);
-            obj.userData = { locked: !!item.locked, anchored: !!item.anchored, canCollide: !!item.canCollide, isPrimitive: true, primitiveType: pType };
-        } else {
-            obj = new THREE.Group();
-            obj.userData = { locked: !!item.locked, isUserGroup: true };
-        }
-
-        if (item.uuid) {
-            obj.uuid = item.uuid;
-        }
-        obj.name = item.name;
-        obj.castShadow = !!item.castShadow;
-        obj.receiveShadow = !!item.receiveShadow;
-
-        let tex = null;
-        if (item.textureName && state.loadedTextures[item.textureName]) {
-            tex = state.loadedTextures[item.textureName].clone();
-            obj.userData.textureName = item.textureName;
-        } else if (item.materialName && materialTextureLibrary[item.materialName]) {
-            tex = materialTextureLibrary[item.materialName].clone();
-            obj.userData.materialName = item.materialName;
-        }
-
-        if (tex) {
-            tex.needsUpdate = true;
-            if (item.textureRepeat) tex.repeat.set(item.textureRepeat.u, item.textureRepeat.v);
-            if (item.textureOffset) tex.offset.set(item.textureOffset.u, item.textureOffset.v);
-
-            obj.traverse(c => {
-                if (c.isMesh) {
-                    c.material.map = tex;
-                    c.material.needsUpdate = true;
+        state.placedObjects.forEach(o => {
+            scene.remove(o);
+            o.traverse(c => {
+                if (c.geometry) c.geometry.dispose();
+                if (c.material) {
+                    if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
+                    else c.material.dispose();
                 }
             });
-        }
+        });
+        state.placedObjects = [];
 
-        // Backward compatibility fallback to support previous non-UUID maps and auto-saves
-        const key = item.uuid || item.name;
-        const parentKey = item.parentUuid || item.parentName;
+        const objectMap = new Map();
 
-        objectMap.set(key, { instance: obj, parentKey: parentKey, rawItem: item });
+        data.forEach(item => {
+            let obj;
+            const safeColor = (item.color && typeof item.color === 'string') ? parseInt(item.color.replace('#', '0x')) : 0xa3a2a5;
+
+            if (item.objectType === "Baseplate" || item.name === "Baseplate" || item.isBaseplate) {
+                const geo = new THREE.BoxGeometry(100, 1, 100);
+                const mat = new THREE.MeshStandardMaterial({ 
+                    color: safeColor, 
+                    map: materialTextureLibrary["Studs"],
+                    roughness: item.roughness || 0.35, 
+                    metalness: 0.1 
+                });
+                if (mat.map) mat.map.repeat.set(25, 25);
+                obj = new THREE.Mesh(geo, mat);
+                obj.userData = { locked: true, anchored: true, canCollide: true, materialName: "Studs" };
+            } else if ((item.objectType === "GLTFModel" || item.modelType) && item.modelType && state.loadedModels[item.modelType]) {
+                obj = cloneModelWithMaterials(state.loadedModels[item.modelType]);
+                obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+                obj.userData = { 
+                    locked: !!item.locked, 
+                    anchored: !!item.anchored, 
+                    canCollide: !!item.canCollide, 
+                    modelType: item.modelType,
+                    hasCustomTexture: !!item.hasCustomTexture 
+                };
+            } else if (item.objectType === "Primitive" || item.isPrimitive || item.primitiveType) {
+                const pType = item.primitiveType || 'Block';
+                let geo = pType === 'Sphere' ? new THREE.SphereGeometry(1.5, 32, 32) : new THREE.BoxGeometry(2, 2, 2);
+                const mat = new THREE.MeshStandardMaterial({ color: safeColor, roughness: item.roughness || 0.5 });
+                obj = new THREE.Mesh(geo, mat);
+                obj.userData = { locked: !!item.locked, anchored: !!item.anchored, canCollide: !!item.canCollide, isPrimitive: true, primitiveType: pType };
+            } else {
+                obj = new THREE.Group();
+                obj.userData = { locked: !!item.locked, isUserGroup: true };
+            }
+
+            if (item.uuid) {
+                obj.uuid = item.uuid;
+            }
+            obj.name = item.name;
+            obj.castShadow = !!item.castShadow;
+            obj.receiveShadow = !!item.receiveShadow;
+
+            let tex = null;
+            let appliedAssetId = null;
+
+            if (item.textureAssetId && state.loadedTextures[item.textureAssetId]) {
+                tex = state.loadedTextures[item.textureAssetId].clone();
+                appliedAssetId = item.textureAssetId;
+            } else if (item.textureName && state.loadedTextures[item.textureName]) {
+                const nameLower = item.textureName.toLowerCase();
+                const isCollidingName = nameLower.endsWith("palette.png") || 
+                                        nameLower.endsWith("colormap.png") || 
+                                        nameLower.endsWith("texture.png") || 
+                                        nameLower === "palette.png" || 
+                                        nameLower === "colormap.png" || 
+                                        nameLower === "texture.png";
+
+                if (item.objectType === "GLTFModel" && isCollidingName) {
+                    tex = null;
+                } else {
+                    tex = state.loadedTextures[item.textureName].clone();
+                    obj.userData.textureName = item.textureName;
+                }
+            } else if (item.materialName && materialTextureLibrary[item.materialName]) {
+                tex = materialTextureLibrary[item.materialName].clone();
+                obj.userData.materialName = item.materialName;
+            }
+
+            // Apply texture overlay ONLY to primitives/baseplates, OR to models with user-applied custom textures
+            let applyTex = false;
+            if (item.objectType === "Primitive" || item.isPrimitive || item.name === "Baseplate" || item.isBaseplate) {
+                applyTex = true;
+            } else if (item.hasCustomTexture) {
+                applyTex = true;
+            }
+
+            if (applyTex && tex) {
+                tex.needsUpdate = true;
+                if (item.textureRepeat) tex.repeat.set(item.textureRepeat.u, item.textureRepeat.v);
+                if (item.textureOffset) tex.offset.set(item.textureOffset.u, item.textureOffset.v);
+
+                obj.traverse(c => {
+                    if (c.isMesh) {
+                        c.material.map = tex;
+                        c.material.needsUpdate = true;
+                        if (appliedAssetId) {
+                            c.material.userData.textureAssetId = appliedAssetId;
+                            c.userData.textureAssetId = appliedAssetId;
+                        }
+                    }
+                });
+            }
+
+            const key = item.uuid || item.name;
+            const parentKey = item.parentUuid || item.parentName;
+
+            objectMap.set(key, { instance: obj, parentKey: parentKey, rawItem: item });
+        });
+
+        objectMap.forEach(({ instance, parentKey }) => {
+            if (parentKey && objectMap.has(parentKey)) {
+                objectMap.get(parentKey).instance.add(instance);
+            } else {
+                scene.add(instance);
+                state.placedObjects.push(instance);
+            }
+        });
+
+        data.forEach(item => {
+            const key = item.uuid || item.name;
+            const mapping = objectMap.get(key);
+            if (!mapping) return;
+            const obj = mapping.instance;
+
+            obj.position.set(item.position.x, item.position.y, item.position.z);
+            obj.scale.set(item.scale.x, item.scale.y, item.scale.z);
+
+            const worldQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(item.rotation.x, item.rotation.y, item.rotation.z));
+
+            if (obj.parent && obj.parent !== scene && obj.parent.name !== "TempMultiPivot") {
+                obj.parent.worldToLocal(obj.position);
+
+                const parentWorldQ = new THREE.Quaternion();
+                obj.parent.getWorldQuaternion(parentWorldQ);
+                obj.quaternion.copy(parentWorldQ.invert().multiply(worldQ));
+
+                const parentWorldScale = new THREE.Vector3();
+                obj.parent.getWorldScale(parentWorldScale);
+                obj.scale.divide(parentWorldScale);
+            } else {
+                obj.quaternion.copy(worldQ);
+            }
+        });
+
+        updateExplorer();
+        renderPropertiesPanel();
     });
-
-    // 1. Build relationships first based on UUIDs or fallback names
-    objectMap.forEach(({ instance, parentKey }) => {
-        if (parentKey && objectMap.has(parentKey)) {
-            objectMap.get(parentKey).instance.add(instance);
-        } else {
-            scene.add(instance);
-            state.placedObjects.push(instance);
-        }
-    });
-
-    // 2. Adjust local vectors based on absolute world coordinates (resolves nested scaling/offset bugs)
-    data.forEach(item => {
-        const key = item.uuid || item.name;
-        const mapping = objectMap.get(key);
-        if (!mapping) return;
-        const obj = mapping.instance;
-
-        obj.position.set(item.position.x, item.position.y, item.position.z);
-        obj.scale.set(item.scale.x, item.scale.y, item.scale.z);
-
-        const worldQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(item.rotation.x, item.rotation.y, item.rotation.z));
-
-        if (obj.parent && obj.parent !== scene && obj.parent.name !== "TempMultiPivot") {
-            obj.parent.worldToLocal(obj.position);
-
-            const parentWorldQ = new THREE.Quaternion();
-            obj.parent.getWorldQuaternion(parentWorldQ);
-            obj.quaternion.copy(parentWorldQ.invert().multiply(worldQ));
-
-            const parentWorldScale = new THREE.Vector3();
-            obj.parent.getWorldScale(parentWorldScale);
-            obj.scale.divide(parentWorldScale);
-        } else {
-            obj.quaternion.copy(worldQ);
-        }
-    });
-
-    updateExplorer();
-    renderPropertiesPanel();
 }
 
 export function hideContextMenu() {
@@ -365,7 +493,7 @@ export function renderPropertiesPanel() {
     const colorHex = (isMesh && state.selectedObject.material && state.selectedObject.material.color) ? "#" + state.selectedObject.material.color.getHexString() : "#ffffff";
     const currentMatName = state.selectedObject.userData.materialName || "Plastic";
 
-    let curTexName = state.selectedObject.userData.textureName || "None";
+    let curTexName = state.selectedObject.userData.textureAssetId || state.selectedObject.userData.textureName || "None";
     let repeatU = 1, repeatV = 1;
 
     const currentBox = new THREE.Box3().setFromObject(state.selectedObject);
@@ -408,7 +536,10 @@ export function renderPropertiesPanel() {
             <span class="prop-label">Texture ID</span>
             <select class="prop-input" id="prop-texture-id">
                 <option value="None">None (Color Only)</option>
-                ${textureKeys.map(k => `<option value="${k}" ${curTexName === k ? 'selected' : ''}>${k}</option>`).join('')}
+                ${textureKeys.map(k => {
+                    const displayName = assetIdToDisplayNameMap.get(k) || k;
+                    return `<option value="${k}" ${curTexName === k ? 'selected' : ''}>${displayName}</option>`;
+                }).join('')}
             </select>
         </div>
         <div class="prop-row">
@@ -501,19 +632,36 @@ export function renderPropertiesPanel() {
     bindEvent('prop-texture-id', 'onchange', (e) => {
         const texName = e.target.value;
         if (texName === "None") {
-            state.selectedObjects.forEach(obj => {
-                obj.userData.textureName = null;
-                obj.traverse(c => { if (c.isMesh) c.material.map = null; c.material.needsUpdate = true; });
-            });
             saveState();
+            state.selectedObjects.forEach(obj => {
+                obj.userData.textureAssetId = null;
+                obj.userData.textureName = null;
+                obj.userData.hasCustomTexture = false;
+                obj.traverse(c => { 
+                    if (c.isMesh) {
+                        c.material.map = null; 
+                        c.material.needsUpdate = true; 
+                        if (c.material.userData) c.material.userData.textureAssetId = null;
+                    } 
+                    if (c.userData) c.userData.textureAssetId = null;
+                });
+            });
         } else if (state.loadedTextures[texName]) {
+            saveState();
             const tex = state.loadedTextures[texName].clone();
             tex.needsUpdate = true;
             state.selectedObjects.forEach(obj => {
-                obj.userData.textureName = texName;
-                obj.traverse(c => { if (c.isMesh) { c.material.map = tex; c.material.needsUpdate = true; } });
+                obj.userData.textureAssetId = texName;
+                obj.userData.hasCustomTexture = true;
+                obj.traverse(c => { 
+                    if (c.isMesh) { 
+                        c.material.map = tex; 
+                        c.material.needsUpdate = true; 
+                        if (c.material.userData) c.material.userData.textureAssetId = texName;
+                    } 
+                    if (c.userData) c.userData.textureAssetId = texName;
+                });
             });
-            saveState();
         }
     });
 
@@ -524,26 +672,33 @@ export function renderPropertiesPanel() {
         const reader = new FileReader();
         reader.onload = (ev) => {
             const arrayBuffer = ev.target.result;
-            saveTextureToDB(file.name, arrayBuffer, file.type);
+            const assetId = "tex_" + THREE.MathUtils.generateUUID();
+            
+            saveTextureToDB(assetId, arrayBuffer, file.type, file.name);
 
             const blob = new Blob([arrayBuffer], { type: file.type });
-            const url = URL.createObjectURL(blob);
+            const fileURL = URL.createObjectURL(blob);
+            
+            assetIdToDisplayNameMap.set(assetId, file.name);
 
-            textureLoader.load(url, (tex) => {
+            textureLoader.load(fileURL, (tex) => {
                 tex.wrapS = THREE.RepeatWrapping;
                 tex.wrapT = THREE.RepeatWrapping;
-                state.loadedTextures[file.name] = tex;
+                state.loadedTextures[assetId] = tex;
 
+                saveState();
                 state.selectedObjects.forEach(obj => {
-                    obj.userData.textureName = file.name;
+                    obj.userData.textureAssetId = assetId;
+                    obj.userData.hasCustomTexture = true;
                     obj.traverse(c => {
                         if (c.isMesh) {
                             c.material.map = tex;
                             c.material.needsUpdate = true;
+                            if (c.material.userData) c.material.userData.textureAssetId = assetId;
                         }
+                        if (c.userData) c.userData.textureAssetId = assetId;
                     });
                 });
-                saveState();
                 renderPropertiesPanel();
                 showStatus("Applied & Saved Custom Texture!");
             });
@@ -697,8 +852,30 @@ export function updatePropertiesUIValues() {
 
 export function exportMapJSON() {
     const serializable = getSerializableObjects();
+    const texturesUsed = {};
+    serializable.forEach(obj => {
+        let textureAssetId = null;
+        obj.traverse(c => {
+            if (c.isMesh && c.material) {
+                const mats = Array.isArray(c.material) ? c.material : [c.material];
+                mats.forEach(m => {
+                    if (m.userData && m.userData.textureAssetId) {
+                        textureAssetId = m.userData.textureAssetId;
+                    }
+                });
+            }
+        });
+        if (!textureAssetId && obj.userData && obj.userData.textureAssetId) {
+            textureAssetId = obj.userData.textureAssetId;
+        }
+        if (textureAssetId && state.textureData[textureAssetId]) {
+            texturesUsed[textureAssetId] = state.textureData[textureAssetId];
+        }
+    });
+
     const exportData = {
         lighting: { ...state.lightingSettings },
+        textures: texturesUsed,
         objects: serializable.map(o => serializeObject(o, scene))
     };
 
