@@ -47,6 +47,7 @@ class StudioEngine {
 
         this.isDraggingMesh = false;
         this.draggedMesh = null;
+        this.draggedOffsetsCaptured = false;
         this.clipboard = null; 
         this.playtestSnapshot = null; 
         this.activeProjectName = "Untitled Game"; 
@@ -232,10 +233,12 @@ class StudioEngine {
         this.transformControls.addEventListener('dragging-changed', (event) => {
             if (event.value) {
                 this.blockNextClick = true;
+                this.captureInitialSelectedTransforms();
             } else {
                 setTimeout(() => {
                     this.blockNextClick = false;
                 }, 50);
+                this.history.saveState();
             }
         });
 
@@ -248,6 +251,45 @@ class StudioEngine {
                 instance.Position.copy(activeObj.position);
                 instance.Size.copy(activeObj.scale);
                 instance.updateTransform();
+
+                // Apply relative transformations onto other parts inside selection
+                if (this.selectedMeshes.length > 1 && this.initialPrimaryPos && this.initialTransforms) {
+                    const deltaPos = activeObj.position.clone().sub(this.initialPrimaryPos);
+                    const deltaRot = activeObj.quaternion.clone().multiply(this.initialPrimaryRot.clone().invert());
+
+                    const scaleRatioX = this.initialPrimaryScale.x !== 0 ? activeObj.scale.x / this.initialPrimaryScale.x : 1;
+                    const scaleRatioY = this.initialPrimaryScale.y !== 0 ? activeObj.scale.y / this.initialPrimaryScale.y : 1;
+                    const scaleRatioZ = this.initialPrimaryScale.z !== 0 ? activeObj.scale.z / this.initialPrimaryScale.z : 1;
+
+                    for (const mesh of this.selectedMeshes) {
+                        if (mesh === activeObj) continue;
+
+                        const initTrans = this.initialTransforms.get(mesh);
+                        if (!initTrans) continue;
+
+                        const otherInstance = mesh.userData.instance;
+                        if (!otherInstance) continue;
+
+                        if (this.transformControls.mode === 'translate') {
+                            mesh.position.copy(initTrans.position).add(deltaPos);
+                        } else if (this.transformControls.mode === 'rotate') {
+                            const offset = initTrans.position.clone().sub(this.initialPrimaryPos);
+                            offset.applyQuaternion(deltaRot);
+                            mesh.position.copy(this.initialPrimaryPos).add(offset).add(deltaPos);
+                            mesh.quaternion.copy(deltaRot).multiply(initTrans.quaternion);
+                        } else if (this.transformControls.mode === 'scale') {
+                            mesh.scale.set(
+                                initTrans.scale.x * scaleRatioX,
+                                initTrans.scale.y * scaleRatioY,
+                                initTrans.scale.z * scaleRatioZ
+                            );
+                        }
+
+                        otherInstance.Position.copy(mesh.position);
+                        otherInstance.Size.copy(mesh.scale);
+                        otherInstance.updateTransform();
+                    }
+                }
 
                 this.updateSelectionOutlines();
                 this.ui.refreshProperties();
@@ -339,6 +381,25 @@ class StudioEngine {
 
         this.updateLighting();
         this.guiService.sync();
+    }
+
+    captureInitialSelectedTransforms() {
+        const activeObj = this.transformControls.object;
+        if (!activeObj) return;
+
+        this.initialPrimaryPos = activeObj.position.clone();
+        this.initialPrimaryRot = activeObj.quaternion.clone();
+        this.initialPrimaryScale = activeObj.scale.clone();
+
+        this.initialTransforms = new Map();
+        for (const mesh of this.selectedMeshes) {
+            if (mesh === activeObj) continue;
+            this.initialTransforms.set(mesh, {
+                position: mesh.position.clone(),
+                quaternion: mesh.quaternion.clone(),
+                scale: mesh.scale.clone()
+            });
+        }
     }
 
     setupPanelSplitters() {
@@ -1202,6 +1263,20 @@ class StudioEngine {
                 }
             }
 
+            // Keyboard-based multiselection deletion support (Roblox style Delete/Backspace)
+            if (e.code === 'Delete' || e.code === 'Backspace') {
+                if (this.selectedMeshes.length > 0 || this.ui.selectedInstances.length > 0) {
+                    e.preventDefault();
+                    this.history.saveState();
+                    const instancesToDelete = [...this.ui.selectedInstances];
+                    instancesToDelete.forEach(inst => {
+                        this.logToConsole(`Deleted: ${inst.Name}`, 'warning');
+                        inst.Destroy();
+                    });
+                    this.ui.selectInstance(null);
+                }
+            }
+
             switch(e.code) {
                 case 'KeyW': case 'ArrowUp': this.keys.w = true; break;
                 case 'KeyA': case 'ArrowLeft': this.keys.a = true; break;
@@ -1301,7 +1376,7 @@ class StudioEngine {
                 } else {
                     this.cameraController.rightMouseDown = true;
                 }
-            } else if (e.button === 0 && !this.isPlaytesting && this.currentTool === 'select') {
+            } else if (e.button === 0 && !this.isPlaytesting) {
                 const mouse = new THREE.Vector2();
                 const rect = this.renderer.domElement.getBoundingClientRect();
                 mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -1310,19 +1385,31 @@ class StudioEngine {
                 this.raycaster.setFromCamera(mouse, this.camera);
                 const intersects = this.raycaster.intersectObjects(this.collidableMeshes);
 
+                let startMarquee = false;
                 if (intersects.length > 0) {
                     const hitMesh = intersects[0].object;
                     const instance = hitMesh.userData.instance;
 
                     if (instance && instance.Locked) {
-                        this.isDraggingMesh = false;
-                        this.draggedMesh = null;
-                    } else {
+                        startMarquee = true;
+                    } else if (instance) {
                         this.isDraggingMesh = true;
                         this.draggedMesh = hitMesh;
-                        this.ui.selectInstance(instance);
+                        if (e.ctrlKey) {
+                            this.ui.selectInstance(instance, true);
+                        } else {
+                            if (!this.ui.selectedInstances.includes(instance)) {
+                                this.ui.selectInstance(instance);
+                            }
+                        }
                         this.history.saveState(); 
                     }
+                } else {
+                    startMarquee = true;
+                }
+
+                if (startMarquee && this.currentTool === 'select' && !this.transformControls.dragging) {
+                    this.startMarqueeSelection(e);
                 }
             }
         });
@@ -1332,6 +1419,7 @@ class StudioEngine {
             if (e.button === 0) {
                 this.isDraggingMesh = false;
                 this.draggedMesh = null;
+                this.draggedOffsetsCaptured = false;
             }
         });
 
@@ -1347,7 +1435,7 @@ class StudioEngine {
 
                 this.raycaster.setFromCamera(mouse, this.camera);
                 
-                const targets = this.collidableMeshes.filter(t => t && t !== this.draggedMesh);
+                const targets = this.collidableMeshes.filter(t => !this.selectedMeshes.includes(t));
                 const intersects = this.raycaster.intersectObjects(targets);
 
                 let hitPoint = new THREE.Vector3();
@@ -1362,15 +1450,46 @@ class StudioEngine {
                 const snappedX = Math.round(hitPoint.x);
                 const snappedZ = Math.round(hitPoint.z);
 
+                if (!this.draggedOffsetsCaptured) {
+                    this.draggedOffsetsCaptured = true;
+                    this.initialDragPrimaryPos = this.draggedMesh.position.clone();
+                    this.initialDragOffsets = new Map();
+                    for (const mesh of this.selectedMeshes) {
+                        if (mesh === this.draggedMesh) continue;
+                        this.initialDragOffsets.set(mesh, mesh.position.clone().sub(this.initialDragPrimaryPos));
+                    }
+                }
+
                 const activeBox = new THREE.Box3().setFromObject(this.draggedMesh);
                 const yOffset = this.draggedMesh.position.y - activeBox.min.y;
 
-                this.draggedMesh.position.set(snappedX, hitPoint.y + yOffset, snappedZ);
+                const targetPrimaryY = hitPoint.y + yOffset;
+                this.draggedMesh.position.set(snappedX, targetPrimaryY, snappedZ);
                 this.resolvePartStacking(this.draggedMesh);
 
-                const instance = this.draggedMesh.userData.instance;
-                instance.Position.copy(this.draggedMesh.position);
-                instance.updateTransform();
+                const primaryInstance = this.draggedMesh.userData.instance;
+                primaryInstance.Position.copy(this.draggedMesh.position);
+                primaryInstance.updateTransform();
+
+                if (this.initialDragOffsets) {
+                    const deltaPos = this.draggedMesh.position.clone().sub(this.initialDragPrimaryPos);
+                    for (const mesh of this.selectedMeshes) {
+                        if (mesh === this.draggedMesh) continue;
+
+                        const offset = this.initialDragOffsets.get(mesh);
+                        if (offset) {
+                            const initPos = this.initialDragPrimaryPos.clone().add(offset);
+                            mesh.position.copy(initPos).add(deltaPos);
+                            this.resolvePartStacking(mesh);
+                            
+                            const otherInst = mesh.userData.instance;
+                            if (otherInst) {
+                                otherInst.Position.copy(mesh.position);
+                                otherInst.updateTransform();
+                            }
+                        }
+                    }
+                }
 
                 this.updateSelectionOutlines();
                 this.ui.refreshProperties();
@@ -1421,6 +1540,85 @@ class StudioEngine {
                 }
             }
         });
+    }
+
+    startMarqueeSelection(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const container = document.getElementById('canvas-container');
+        const rect = this.renderer.domElement.getBoundingClientRect();
+
+        const startX = e.clientX;
+        const startY = e.clientY;
+
+        const div = document.createElement('div');
+        div.style.border = '1.5px dashed #0098ff';
+        div.style.backgroundColor = 'rgba(0, 152, 255, 0.12)';
+        div.style.position = 'absolute';
+        div.style.pointerEvents = 'none';
+        div.style.zIndex = '10000';
+        div.style.left = `${startX - rect.left}px`;
+        div.style.top = `${startY - rect.top}px`;
+        div.style.width = '0px';
+        div.style.height = '0px';
+        container.appendChild(div);
+
+        const onMouseMove = (moveEvent) => {
+            const currentX = moveEvent.clientX;
+            const currentY = moveEvent.clientY;
+
+            const left = Math.min(startX, currentX) - rect.left;
+            const top = Math.min(startY, currentY) - rect.top;
+            const width = Math.abs(startX - currentX);
+            const height = Math.abs(startY - currentY);
+
+            div.style.left = `${left}px`;
+            div.style.top = `${top}px`;
+            div.style.width = `${width}px`;
+            div.style.height = `${height}px`;
+
+            const minX = Math.min(startX, currentX) - rect.left;
+            const maxX = Math.max(startX, currentX) - rect.left;
+            const minY = Math.min(startY, currentY) - rect.top;
+            const maxY = Math.max(startY, currentY) - rect.top;
+
+            const selectedInstances = [];
+            for (const mesh of this.collidableMeshes) {
+                const instance = mesh.userData.instance;
+                if (!instance || instance.Locked) continue;
+
+                // Project local coordinate matrix space to screen boundaries
+                const meshCenter = new THREE.Vector3();
+                const bbox = new THREE.Box3().setFromObject(mesh);
+                bbox.getCenter(meshCenter);
+                meshCenter.project(this.camera);
+
+                const px = (meshCenter.x * 0.5 + 0.5) * rect.width;
+                const py = (-meshCenter.y * 0.5 + 0.5) * rect.height;
+
+                if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+                    selectedInstances.push(instance);
+                }
+            }
+
+            this.ui.selectedInstances = selectedInstances;
+            this.selectedMeshes = selectedInstances.map(inst => inst.mesh);
+            this.updateSelectionOutlines();
+            this.ui.refreshExplorer();
+        };
+
+        const onMouseUp = () => {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+            div.remove();
+
+            this.ui.refreshProperties();
+            this.refreshMultiSelection();
+        };
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
     }
 
     toggleShiftLock() {
@@ -1570,6 +1768,16 @@ class StudioEngine {
             this.selectedMeshes = [];
             this.refreshMultiSelection();
         }
+    }
+
+    selectMultipleParts(instances) {
+        this.selectedMeshes = [];
+        for (const inst of instances) {
+            if (inst && inst.mesh) {
+                this.selectedMeshes.push(inst.mesh);
+            }
+        }
+        this.refreshMultiSelection();
     }
 
     startPlaytest() {
