@@ -1,4 +1,4 @@
-import { Instance, Lighting, StarterPlayer } from './Instance.js';
+import { Instance, Lighting, StarterPlayer, Players } from './Instance.js';
 
 export class Folder extends Instance {
     constructor(name) {
@@ -10,6 +10,7 @@ export function createDataModel() {
     const game = new Folder("game");
 
     const Workspace = new Folder("Workspace");
+    const PlayersService = new Players();
     const ReplicatedStorage = new Folder("ReplicatedStorage");
     const ServerScriptService = new Folder("ServerScriptService");
     const StarterPlayerService = new StarterPlayer(); 
@@ -19,11 +20,11 @@ export function createDataModel() {
     const LightingService = new Lighting();
     LightingService.Name = "Lighting";
 
-    // FIXED: Removed the redundant .push() call which was creating duplicate folders in the Explorer [3]
     const StarterCharacterScripts = new Folder("StarterCharacterScripts");
     StarterCharacterScripts.Parent = StarterPlayerService;
 
     Workspace.Parent = game;
+    PlayersService.Parent = game;
     ReplicatedStorage.Parent = game;
     ServerScriptService.Parent = game;
     StarterPlayerService.Parent = game;

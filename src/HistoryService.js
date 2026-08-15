@@ -1,6 +1,4 @@
-/* --- START OF FILE HistoryService.js (REVISED) --- */
-
-import { Part, SpawnLocation, Script, ScreenGui, Frame, TextLabel, TextButton, Model, PointLight, SpotLight, Lighting, MeshPart, StarterPlayer, BillboardGui, SurfaceGui, loadAssetFromDB } from './Instance.js';
+import { Part, LightBlock, SpawnLocation, Script, LocalScript, ScreenGui, Frame, TextLabel, TextButton, Model, PointLight, SpotLight, Lighting, MeshPart, StarterPlayer, BillboardGui, SurfaceGui, Water, Terrain, loadAssetFromDB, Player } from './Instance.js';
 import { Folder } from './Explorer.js';
 
 export class HistoryService {
@@ -38,7 +36,21 @@ export class HistoryService {
             Name: instance.Name,
             children: []
         };
-        if (instance.ClassName === "Part" || instance.ClassName === "SpawnLocation" || instance.ClassName === "MeshPart") {
+
+        if (instance.ClassName === "Player") {
+            data.UserId = instance.UserId;
+            data.DisplayName = instance.DisplayName;
+        } else if (instance.ClassName === "LightBlock") {
+            data.Shape = instance.Shape;
+            data.Size = { x: instance.Size.x, y: instance.Size.y, z: instance.Size.z };
+            data.Position = { x: instance.Position.x, y: instance.Position.y, z: instance.Position.z };
+            data.Color = instance.Color;
+            data.Brightness = instance.Brightness;
+            data.Range = instance.Range;
+            data.Anchored = instance.Anchored;
+            data.CanCollide = instance.CanCollide;
+            data.Locked = instance.Locked;
+        } else if (instance.ClassName === "Part" || instance.ClassName === "SpawnLocation" || instance.ClassName === "MeshPart") {
             data.Shape = instance.Shape;
             data.Size = { x: instance.Size.x, y: instance.Size.y, z: instance.Size.z };
             data.Position = { x: instance.Position.x, y: instance.Position.y, z: instance.Position.z };
@@ -56,7 +68,29 @@ export class HistoryService {
                 data.AssetId = instance.AssetId;
                 data.customTextureUrl = instance.customTextureUrl; 
             }
+        } else if (instance.ClassName === "Water") {
+            data.Size = { x: instance.Size.x, y: instance.Size.y, z: instance.Size.z };
+            data.Position = { x: instance.Position.x, y: instance.Position.y, z: instance.Position.z };
+            data.Color = instance.Color;
+            data.Transparency = instance.Transparency;
+            data.WaveSpeed = instance.WaveSpeed;
+            data.Anchored = instance.Anchored;
+            data.CanCollide = instance.CanCollide;
+            data.Locked = instance.Locked;
+        } else if (instance.ClassName === "Terrain") {
+            data.Size = { x: instance.Size.x, y: instance.Size.y, z: instance.Size.z };
+            data.Position = { x: instance.Position.x, y: instance.Position.y, z: instance.Position.z };
+            data.MaterialType = instance.MaterialType;
+            data.Anchored = instance.Anchored;
+            data.CanCollide = instance.CanCollide;
+            data.Locked = instance.Locked;
+
+            if (instance.geometry && instance.geometry.attributes.position) {
+                data.heightBuffer = Array.from(instance.geometry.attributes.position.array);
+            }
         } else if (instance.ClassName === "Script") {
+            data.Source = instance.Source;
+        } else if (instance.ClassName === "LocalScript") {
             data.Source = instance.Source;
         } else if (instance.ClassName === "PointLight" || instance.ClassName === "SpotLight") {
             data.Color = instance.Color;
@@ -67,6 +101,11 @@ export class HistoryService {
         } else if (instance.ClassName === "Lighting") {
             data.ClockTime = instance.ClockTime;
             data.Brightness = instance.Brightness;
+            data.BloomStrength = instance.BloomStrength;
+            data.MotionBlur = instance.MotionBlur;
+            data.Exposure = instance.Exposure;
+            data.Rayleigh = instance.Rayleigh;
+            data.Turbidity = instance.Turbidity;
             data.Ambient = instance.Ambient;
         } else if (instance.ClassName === "StarterPlayer") {
             data.CharacterWalkSpeed = instance.CharacterWalkSpeed;
@@ -94,6 +133,7 @@ export class HistoryService {
                 data.TextYAlignment = instance.TextYAlignment;
             }
         }
+
         for (const child of instance.children) {
             data.children.push(this.serializeInstance(child));
         }
@@ -101,7 +141,6 @@ export class HistoryService {
     }
 
     async deserializeDataModel(state) {
-        // Gather all importedAssetIds in the saved data state
         const assetIds = new Set();
         const gatherIds = (node) => {
             if (node.isImportedMesh && node.importedAssetId) {
@@ -113,7 +152,6 @@ export class HistoryService {
         };
         gatherIds(state);
 
-        // Load missing asset structures from local IndexedDB and populate current cache
         window.importedAssets = window.importedAssets || new Map();
         for (const id of assetIds) {
             if (!window.importedAssets.has(id)) {
@@ -135,6 +173,7 @@ export class HistoryService {
             }
         };
         clearFolder("Workspace");
+        clearFolder("Players");
         clearFolder("ServerScriptService");
         clearFolder("StarterGui");
 
@@ -146,14 +185,20 @@ export class HistoryService {
             }
         };
         loadFolderState("Workspace");
+        loadFolderState("Players");
         loadFolderState("ServerScriptService");
         loadFolderState("StarterGui");
 
         const lightingState = state.children.find(c => c.ClassName === "Lighting");
         const lightingInstance = window.game.children.find(c => c.ClassName === "Lighting");
         if (lightingState && lightingInstance) {
-            lightingInstance.ClockTime = lightingState.ClockTime;
-            lightingInstance.Brightness = lightingState.Brightness;
+            lightingInstance.ClockTime = lightingState.ClockTime !== undefined ? lightingState.ClockTime : 12.0;
+            lightingInstance.Brightness = lightingState.Brightness !== undefined ? lightingState.Brightness : 1.0;
+            lightingInstance.BloomStrength = lightingState.BloomStrength !== undefined ? lightingState.BloomStrength : 0.85;
+            lightingInstance.MotionBlur = lightingState.MotionBlur !== undefined ? lightingState.MotionBlur : 1.0;
+            lightingInstance.Exposure = lightingState.Exposure !== undefined ? lightingState.Exposure : 1.0;
+            lightingInstance.Rayleigh = lightingState.Rayleigh !== undefined ? lightingState.Rayleigh : 1.0;
+            lightingInstance.Turbidity = lightingState.Turbidity !== undefined ? lightingState.Turbidity : 1.0;
             lightingInstance.Ambient = lightingState.Ambient;
         }
 
@@ -182,7 +227,23 @@ export class HistoryService {
     loadStateIntoFolder(folderState, folderInstance) {
         for (const childData of folderState.children) {
             let inst;
-            if (childData.ClassName === "Part") {
+            if (childData.ClassName === "Player") {
+                inst = new Player(childData.Name);
+                if (childData.UserId) inst.UserId = childData.UserId;
+                if (childData.DisplayName) inst.DisplayName = childData.DisplayName;
+            } else if (childData.ClassName === "LightBlock") {
+                inst = new LightBlock(childData.Shape || "Block");
+                inst.Name = childData.Name;
+                inst.Size.set(childData.Size.x, childData.Size.y, childData.Size.z);
+                inst.Position.set(childData.Position.x, childData.Position.y, childData.Position.z);
+                inst.Color = childData.Color;
+                inst.Brightness = childData.Brightness;
+                inst.Range = childData.Range;
+                inst.Anchored = childData.Anchored;
+                inst.CanCollide = childData.CanCollide;
+                inst.Locked = childData.Locked !== undefined ? childData.Locked : false;
+                inst.updateTransform();
+            } else if (childData.ClassName === "Part") {
                 inst = new Part(childData.Shape);
                 inst.Name = childData.Name;
                 inst.Size.set(childData.Size.x, childData.Size.y, childData.Size.z);
@@ -208,6 +269,38 @@ export class HistoryService {
                     }
                 }
                 
+                inst.updateTransform();
+            } else if (childData.ClassName === "Water") {
+                inst = new Water();
+                inst.Name = childData.Name;
+                inst.Size.set(childData.Size.x, childData.Size.y, childData.Size.z);
+                inst.Position.set(childData.Position.x, childData.Position.y, childData.Position.z);
+                inst.Color = childData.Color;
+                inst.Transparency = childData.Transparency;
+                inst.WaveSpeed = childData.WaveSpeed;
+                inst.Anchored = childData.Anchored;
+                inst.CanCollide = childData.CanCollide;
+                inst.Locked = childData.Locked !== undefined ? childData.Locked : false;
+                inst.updateTransform();
+            } else if (childData.ClassName === "Terrain") {
+                inst = new Terrain();
+                inst.Name = childData.Name;
+                inst.Size.set(childData.Size.x, childData.Size.y, childData.Size.z);
+                inst.Position.set(childData.Position.x, childData.Position.y, childData.Position.z);
+                inst.MaterialType = childData.MaterialType;
+                inst.Anchored = childData.Anchored;
+                inst.CanCollide = childData.CanCollide;
+                inst.Locked = childData.Locked !== undefined ? childData.Locked : false;
+
+                if (childData.heightBuffer && inst.geometry) {
+                    const posAttr = inst.geometry.attributes.position;
+                    for (let i = 0; i < childData.heightBuffer.length; i++) {
+                        posAttr.array[i] = childData.heightBuffer[i];
+                    }
+                    posAttr.needsUpdate = true;
+                    inst.geometry.computeVertexNormals();
+                }
+
                 inst.updateTransform();
             } else if (childData.ClassName === "MeshPart") {
                 inst = new MeshPart();
@@ -252,6 +345,10 @@ export class HistoryService {
                 inst.updateTransform();
             } else if (childData.ClassName === "Script") {
                 inst = new Script();
+                inst.Name = childData.Name;
+                inst.Source = childData.Source;
+            } else if (childData.ClassName === "LocalScript") {
+                inst = new LocalScript();
                 inst.Name = childData.Name;
                 inst.Source = childData.Source;
             } else if (childData.ClassName === "Model") {

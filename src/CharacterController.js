@@ -1,13 +1,12 @@
-/* --- START OF FILE CharacterController.js (REVISED) --- */
-
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 
 export class CharacterController {
     constructor(scene) {
         this.scene = scene;
-        this.loader = new GLTFLoader();
-        this.textureLoader = new THREE.TextureLoader();
+        this.gltfLoader = new GLTFLoader();
+        this.fbxLoader = new FBXLoader();
 
         this.characterGroup = null;
         this.characterMesh = null;
@@ -17,8 +16,18 @@ export class CharacterController {
 
         this.velocity = new THREE.Vector3();
         this.isGrounded = true;
+        this.isLanding = false;
+        this.landingTimeout = null;
         this.isDead = false; 
         this.keys = null; 
+
+        this.humanoidInstance = null; 
+        this.meshGroundOffset = 0; // Calculates exact ground alignment for custom mesh
+
+        // --- MODEL SCALE & ORIENTATION FIXES ---
+        this.modelScale = 3.5; 
+        this.rotationXFix = -Math.PI / 2;    
+        this.rotationYFix = 0;              
     }
 
     findSpawnLocation(root) {
@@ -30,7 +39,6 @@ export class CharacterController {
         return null;
     }
 
-    // Constructs an offline-friendly, assets-free blocky avatar if the GLTF files fail to load
     createFallbackRig() {
         this.characterMesh = new THREE.Group();
         
@@ -80,30 +88,35 @@ export class CharacterController {
         this.mixer = null; 
         this.actions = {};
         this.isGrounded = true;
+        this.isLanding = false;
         this.isDead = false;
     }
 
     load(onComplete) {
-        const modelPath = './Characters/Ranger.glb';
-        const texturePath = './Characters/ranger_texture.png';
-        const movementAnimPath = './Animations/Rig_Medium_MovementBasic.glb';
-        const generalAnimPath = './Animations/Rig_Medium_General.glb';
+        const modelPath = './Characters/Character1.glb';
 
-        const skinTexture = this.textureLoader.load(texturePath, (tex) => {
-            tex.colorSpace = THREE.SRGBColorSpace;
-            tex.flipY = false;
-        }, undefined, () => {
-            console.warn("Ranger skin texture could not load. Proceeding with flat mesh colors.");
-        });
-
-        const loadGLB = (url) => new Promise((res, rej) => this.loader.load(url, res, undefined, rej));
+        const loadGLB = (url) => new Promise((res, rej) => this.gltfLoader.load(url, res, undefined, rej));
+        const loadFBX = (url) => new Promise((res) => this.fbxLoader.load(url, res, undefined, () => res(null)));
 
         Promise.all([
             loadGLB(modelPath),
-            loadGLB(movementAnimPath),
-            loadGLB(generalAnimPath)
-        ]).then(([ranger, basicAnims, generalAnims]) => {
-            this.characterMesh = ranger.scene;
+            loadFBX('./Animations/Idle.fbx'),
+            loadFBX('./Animations/Walking.fbx'),
+            loadFBX('./Animations/Jumping.fbx'),
+            loadFBX('./Animations/Falling.fbx'),
+            loadFBX('./Animations/Landing.fbx')
+        ]).then(([characterGltf, idleFbx, walkFbx, jumpFbx, fallFbx, landFbx]) => {
+            this.characterMesh = characterGltf.scene;
+
+            this.characterMesh.scale.setScalar(this.modelScale);
+            this.characterMesh.rotation.x = this.rotationXFix;
+            this.characterMesh.rotation.y = this.rotationYFix;
+
+            // PRECISE GROUND ALIGNMENT: Calculate exact feet level so mesh never sinks into ground
+            this.characterMesh.updateMatrixWorld(true);
+            const bbox = new THREE.Box3().setFromObject(this.characterMesh);
+            this.meshGroundOffset = -bbox.min.y;
+            this.characterMesh.position.y = this.meshGroundOffset;
 
             this.characterGroup = new THREE.Group();
             this.characterGroup.position.set(0, 0, 0);
@@ -111,6 +124,8 @@ export class CharacterController {
             const spawn = this.findSpawnLocation(window.game);
             if (spawn) {
                 this.characterGroup.position.copy(spawn.Position).y += (spawn.Size.y / 2 + 0.1);
+            } else {
+                this.characterGroup.position.set(0, 0.5, 0);
             }
 
             this.scene.add(this.characterGroup);
@@ -120,51 +135,107 @@ export class CharacterController {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
-                    if (child.material) {
-                        child.material.map = skinTexture;
-                        child.material.needsUpdate = true;
-                    }
                 }
             });
 
+            const getRelativePath = (root, target) => {
+                const path = [];
+                let current = target;
+                while (current && current !== root) {
+                    path.unshift(current.name);
+                    current = current.parent;
+                }
+                return path.join('/');
+            };
+
+            const characterBones = {};
+            this.characterMesh.traverse((child) => {
+                if (child.name) {
+                    characterBones[child.name] = child;
+                }
+            });
+
+            const processMixamoClip = (clip) => {
+                if (!clip) return null;
+                const clonedClip = clip.clone();
+                const cleanTracks = [];
+
+                clonedClip.tracks.forEach(track => {
+                    const lastDot = track.name.lastIndexOf('.');
+                    if (lastDot > -1) {
+                        const path = track.name.substring(0, lastDot);
+                        const propertyName = track.name.substring(lastDot + 1);
+                        
+                        const lastSlash = path.lastIndexOf('/');
+                        let nodeName = lastSlash > -1 ? path.substring(lastSlash + 1) : path;
+                        
+                        const pipeIndex = nodeName.indexOf('|');
+                        if (pipeIndex > -1) {
+                            nodeName = nodeName.substring(pipeIndex + 1);
+                        }
+
+                        const targetBoneNode = Object.values(characterBones).find(
+                            node => node.name.toLowerCase() === nodeName.toLowerCase()
+                        );
+
+                        if (targetBoneNode) {
+                            const relativePath = getRelativePath(this.characterMesh, targetBoneNode);
+
+                            if (propertyName === 'quaternion') {
+                                track.name = relativePath + '.' + propertyName;
+                                cleanTracks.push(track);
+                            }
+                            else if (propertyName === 'position' && (nodeName.toLowerCase().includes('hips') || nodeName.toLowerCase().includes('pelvis'))) {
+                                track.name = relativePath + '.' + propertyName;
+                                const firstFrameY = Math.abs(track.values[1]);
+                                const isCentimeters = firstFrameY > 5.0;
+
+                                if (isCentimeters) {
+                                    for (let i = 0; i < track.values.length; i++) {
+                                        track.values[i] *= 0.01;
+                                    }
+                                }
+                                cleanTracks.push(track);
+                            }
+                        }
+                    }
+                });
+                
+                clonedClip.tracks = cleanTracks;
+                return clonedClip;
+            };
+
             this.mixer = new THREE.AnimationMixer(this.characterMesh);
 
-            const generalClips = generalAnims.animations;
-            const idleClip = generalClips.find(c => c.name.toLowerCase().includes('animation 7')) || generalClips[6];
+            const idleClip = idleFbx?.animations?.length > 0 ? processMixamoClip(idleFbx.animations[0]) : null;
+            const walkClip = walkFbx?.animations?.length > 0 ? processMixamoClip(walkFbx.animations[0]) : null;
+            const jumpClip = jumpFbx?.animations?.length > 0 ? processMixamoClip(jumpFbx.animations[0]) : null;
+            const fallClip = fallFbx?.animations?.length > 0 ? processMixamoClip(fallFbx.animations[0]) : null;
+            const landClip = landFbx?.animations?.length > 0 ? processMixamoClip(landFbx.animations[0]) : null;
+
             if (idleClip) {
                 idleClip.name = 'idle';
                 this.actions['idle'] = this.mixer.clipAction(idleClip);
             }
-
-            const basicClips = basicAnims.animations;
-            basicClips.forEach((clip) => {
-                const name = clip.name.toLowerCase();
-                const isExactRun = (name === 'run' || name === 'rig_medium|run');
-                const isExactJump = (name === 'jump' || name === 'rig_medium|jump');
-
-                if (isExactRun) {
-                    this.actions['run'] = this.mixer.clipAction(clip);
-                } else if ((name.includes('run') || name.includes('walk_fast') || name.includes('walk')) && !this.actions['run']) {
-                    this.actions['run'] = this.mixer.clipAction(clip);
-                }
-
-                if (isExactJump) {
-                    this.actions['jump'] = this.mixer.clipAction(clip);
-                    this.actions['jump'].setLoop(THREE.LoopOnce);
-                    this.actions['jump'].clampWhenFinished = true;
-                } else if (name.includes('jump') && !this.actions['jump']) {
-                    this.actions['jump'] = this.mixer.clipAction(clip);
-                    this.actions['jump'].setLoop(THREE.LoopOnce);
-                    this.actions['jump'].clampWhenFinished = true;
-                }
-            });
-
-            const dieClip = generalClips.find(c => c.name.toLowerCase().includes('death') || c.name.toLowerCase().includes('die') || c.name.toLowerCase().includes('defeat'));
-            if (dieClip) {
-                dieClip.name = 'die';
-                this.actions['die'] = this.mixer.clipAction(dieClip);
-                this.actions['die'].setLoop(THREE.LoopOnce);
-                this.actions['die'].clampWhenFinished = true;
+            if (walkClip) {
+                walkClip.name = 'run';
+                this.actions['run'] = this.mixer.clipAction(walkClip);
+            }
+            if (jumpClip) {
+                jumpClip.name = 'jump';
+                this.actions['jump'] = this.mixer.clipAction(jumpClip);
+                this.actions['jump'].setLoop(THREE.LoopOnce);
+                this.actions['jump'].clampWhenFinished = true;
+            }
+            if (fallClip) {
+                fallClip.name = 'fall';
+                this.actions['fall'] = this.mixer.clipAction(fallClip);
+            }
+            if (landClip) {
+                landClip.name = 'land';
+                this.actions['land'] = this.mixer.clipAction(landClip);
+                this.actions['land'].setLoop(THREE.LoopOnce);
+                this.actions['land'].clampWhenFinished = true;
             }
 
             if (this.actions['idle']) this.actions['idle'].play();
@@ -177,11 +248,8 @@ export class CharacterController {
 
             if (onComplete) onComplete();
         }).catch(err => {
-            console.warn("Local character asset files are missing or could not load. Spawning a blocky procedural rig so you can playtest offline:", err);
-            
-            // Generate basic fallback rig and start playtest
+            console.warn("Character asset files could not load. Falling back to blocky rig:", err);
             this.createFallbackRig();
-            
             if (onComplete) onComplete();
         });
     }
@@ -190,6 +258,11 @@ export class CharacterController {
         if (this.isDead) return;
         this.isDead = true;
         this.velocity.set(0, 0, 0);
+
+        if (this.humanoidInstance) {
+            this.humanoidInstance.Health = 0;
+            window.dispatchEvent(new CustomEvent('gui-changed'));
+        }
 
         if (this.actions['die']) {
             if (this.actions['idle']) this.actions['idle'].stop();
@@ -200,17 +273,35 @@ export class CharacterController {
         }
     }
 
+    // HIPHEIGHT WORLD POSITION ADJUSTER (ROBLOX STYLE)
+    applyHumanoidProperties() {
+        if (!this.humanoidInstance || !this.characterMesh) return;
+
+        // HipHeight specifies the height offset above ground!
+        const targetHipHeight = this.humanoidInstance.HipHeight !== undefined ? this.humanoidInstance.HipHeight : 2.0;
+        const hipHeightOffset = targetHipHeight - 2.0;
+        
+        // Adjust mesh Y elevation directly without stretching scale
+        this.characterMesh.position.y = this.meshGroundOffset + hipHeightOffset;
+        this.characterMesh.scale.setScalar(this.modelScale);
+
+        if (this.humanoidInstance.Health <= 0 && !this.isDead) {
+            this.die();
+        }
+    }
+
     update(delta, camera, shiftLockActive, isFirstPerson, cameraYaw, collidableMeshes) {
         if (!this.characterGroup || !this.keys) return;
+
+        this.applyHumanoidProperties();
 
         if (this.isDead) {
             if (this.mixer) this.mixer.update(delta);
             return;
         }
 
-        const spService = window.game.children.find(c => c.ClassName === "StarterPlayer");
-        const walkSpeed = spService ? spService.CharacterWalkSpeed : 8.0;  
-        const jumpPower = spService ? spService.CharacterJumpPower : 12.0; 
+        const walkSpeed = this.humanoidInstance ? this.humanoidInstance.WalkSpeed : 16.0;  
+        const jumpPower = this.humanoidInstance ? this.humanoidInstance.JumpPower : 50.0; 
 
         const moveVector = new THREE.Vector3();
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -252,8 +343,8 @@ export class CharacterController {
         nextPosition.x += this.velocity.x * delta;
         nextPosition.z += this.velocity.z * delta;
 
-        const playerRadius = 0.6;
-        const playerHeight = 1.8;
+        const playerRadius = 0.8;
+        const playerHeight = 3.2;
 
         const playerBox = new THREE.Box3(
             new THREE.Vector3(nextPosition.x - playerRadius, this.characterGroup.position.y, nextPosition.z - playerRadius),
@@ -262,7 +353,6 @@ export class CharacterController {
 
         for (const mesh of collidableMeshes) {
             const instance = mesh.userData.instance;
-            
             const meshBox = new THREE.Box3().setFromObject(mesh);
 
             if (playerBox.intersectsBox(meshBox)) {
@@ -312,6 +402,8 @@ export class CharacterController {
         this.characterGroup.position.x = nextPosition.x;
         this.characterGroup.position.z = nextPosition.z;
 
+        const previouslyGrounded = this.isGrounded;
+
         if (!this.isGrounded) {
             this.velocity.y += -32 * delta;
         }
@@ -319,12 +411,12 @@ export class CharacterController {
         if (this.keys.space && this.isGrounded) {
             this.velocity.y = jumpPower;
             this.isGrounded = false;
+            this.isLanding = false;
             if (this.actions['jump']) this.actions['jump'].reset().play();
         }
 
         this.characterGroup.position.y += this.velocity.y * delta;
 
-        // Dynamic ground check
         let landedY = 0;
         let onPlatform = false;
 
@@ -358,11 +450,36 @@ export class CharacterController {
             this.isGrounded = false;
         }
 
+        // Trigger Landing animation if returning to ground
+        if (!previouslyGrounded && this.isGrounded) {
+            if (this.actions['land']) {
+                this.isLanding = true;
+                const landAction = this.actions['land'];
+                landAction.reset().setEffectiveWeight(1).play();
+
+                const landDuration = (landAction.getClip().duration * 1000) || 350;
+                clearTimeout(this.landingTimeout);
+                this.landingTimeout = setTimeout(() => {
+                    this.isLanding = false;
+                }, landDuration);
+            }
+        }
+
         let nextActionName = 'idle';
         if (!this.isGrounded) {
-            nextActionName = 'jump';
+            this.isLanding = false;
+            if (this.velocity.y < -1.0 && this.actions['fall']) {
+                nextActionName = 'fall';
+            } else {
+                nextActionName = 'jump';
+            }
         } else if (isMoving) {
+            this.isLanding = false;
             nextActionName = 'run';
+        } else if (this.isLanding && this.actions['land']) {
+            nextActionName = 'land';
+        } else {
+            nextActionName = 'idle';
         }
 
         if (this.activeActionName !== nextActionName) {
@@ -386,6 +503,8 @@ export class CharacterController {
         this.mixer = null;
         this.actions = {};
         this.activeActionName = 'idle';
+        this.isLanding = false;
         this.isDead = false; 
+        this.humanoidInstance = null;
     }
 }

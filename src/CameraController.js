@@ -8,11 +8,15 @@ export class CameraController {
         this.cameraDistance = 5;
         this.cameraYaw = 0;
         this.cameraPitch = 0.2;
-        this.cameraOffset = new THREE.Vector3(0, 1.3, 0);
+        this.cameraOffset = new THREE.Vector3(0, 2.6, 0);
 
         this.shiftLockActive = false;
+        this.shiftLockEnabled = true;
         this.isFirstPerson = false;
         this.rightMouseDown = false;
+
+        this.sensitivity = 1.0;
+        this.inverted = false;
     }
 
     // Play Mode: Orbit and track player
@@ -29,7 +33,6 @@ export class CameraController {
             characterGroup.visible = true;
         }
 
-        // Sync the crosshair HTML overlay dynamically based on first person / shift lock
         const crosshair = document.getElementById('crosshair');
         if (crosshair) {
             if (this.isFirstPerson || this.shiftLockActive) {
@@ -39,7 +42,6 @@ export class CameraController {
             }
         }
 
-        // Shift view laterally to the right when Roblox Shift-Lock is turned on
         if (this.shiftLockActive && !this.isFirstPerson) {
             const rightDir = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
             targetPosition.addScaledVector(rightDir, 0.85);
@@ -53,7 +55,6 @@ export class CameraController {
 
         this.camera.position.copy(targetPosition).add(sphericalOffset);
 
-        // Clamping height to prevent dropping beneath ground plane (Y=0)
         const minCameraHeight = 0.3;
         if (this.camera.position.y < minCameraHeight) {
             this.camera.position.y = minCameraHeight;
@@ -64,15 +65,11 @@ export class CameraController {
 
     // Edit Mode: Studio Fly Camera
     updateEditMode(delta, keys) {
-        // Compute orientation directly
         this.camera.rotation.order = 'YXZ';
         this.camera.rotation.y = this.cameraYaw;
-        
-        // FIXED: Inverted pitch direction so dragging mouse down tilts camera down
         this.camera.rotation.x = -this.cameraPitch; 
 
-        // Translation calculations
-        const speed = 25 * delta; // Fly speed (25 units/studs per second)
+        const speed = 25 * delta;
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
         const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
         const up = new THREE.Vector3(0, 1, 0);
@@ -81,7 +78,7 @@ export class CameraController {
         if (keys.s) this.camera.position.addScaledVector(forward, -speed);
         if (keys.a) this.camera.position.addScaledVector(right, -speed);
         if (keys.d) this.camera.position.addScaledVector(right, speed);
-        if (keys.e) this.camera.position.addScaledVector(up, speed); // Fly Up
-        if (keys.q) this.camera.position.addScaledVector(up, -speed); // Fly Down
+        if (keys.e) this.camera.position.addScaledVector(up, speed);
+        if (keys.q) this.camera.position.addScaledVector(up, -speed);
     }
 }

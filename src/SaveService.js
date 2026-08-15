@@ -3,12 +3,49 @@ export class SaveService {
         this.engine = engine;
     }
 
+    updateTitleBar(name) {
+        const titleEl = document.getElementById('project-title-display');
+        if (titleEl) {
+            titleEl.innerText = `${name} - Roblox Studio`;
+        }
+        if (this.engine) {
+            this.engine.activeProjectName = name;
+        }
+    }
+
+    quickSave() {
+        const currentName = this.engine.activeProjectName;
+        const isUntitled = !currentName || 
+                            currentName === "Untitled Experience" || 
+                            currentName === "Untitled Place" || 
+                            currentName === "Untitled Game";
+
+        if (!isUntitled) {
+            this.saveLocal(currentName);
+        } else {
+            this.saveAs();
+        }
+    }
+
+    saveAs() {
+        const defaultName = (this.engine.activeProjectName && 
+                             this.engine.activeProjectName !== "Untitled Experience" && 
+                             this.engine.activeProjectName !== "Untitled Place") 
+            ? this.engine.activeProjectName 
+            : "My Roblox Place";
+
+        const name = prompt("Enter experience name to save locally:", defaultName);
+        if (name && name.trim() !== "") {
+            const cleanName = name.trim();
+            this.saveLocal(cleanName);
+        }
+    }
+
     saveLocal(name) {
         const state = this.engine.history.serializeInstance(window.game);
         const localGames = this.getLocalGames();
-        
-        // Overwrite if same name exists, otherwise append
-        const existingIdx = localGames.findIndex(g => g.name === name);
+
+        const existingIdx = localGames.findIndex(g => g.name.toLowerCase() === name.toLowerCase());
         const saveObject = {
             id: existingIdx > -1 ? localGames[existingIdx].id : Date.now().toString(),
             name: name,
@@ -23,18 +60,18 @@ export class SaveService {
         }
 
         localStorage.setItem('STUDIO_LOCAL_GAMES', JSON.stringify(localGames));
-        this.engine.logToConsole(`Successfully saved experience [${name}] locally.`, 'success');
+        this.updateTitleBar(name);
+        this.engine.logToConsole(`Successfully saved place [${name}] locally.`, 'success');
     }
 
     saveCloud(name, onComplete) {
-        // Simulate network transmission latency
         this.engine.logToConsole("Connecting to Roblox secure cloud servers...", "info");
-        
+
         setTimeout(() => {
             const state = this.engine.history.serializeInstance(window.game);
             const cloudGames = this.getCloudGames();
-            
-            const existingIdx = cloudGames.findIndex(g => g.name === name);
+
+            const existingIdx = cloudGames.findIndex(g => g.name.toLowerCase() === name.toLowerCase());
             const saveObject = {
                 id: existingIdx > -1 ? cloudGames[existingIdx].id : Date.now().toString(),
                 name: name,
@@ -49,17 +86,26 @@ export class SaveService {
             }
 
             localStorage.setItem('STUDIO_CLOUD_GAMES', JSON.stringify(cloudGames));
-            this.engine.logToConsole(`Successfully published experience [${name}] to Roblox Cloud!`, 'success');
+            this.updateTitleBar(name);
+            this.engine.logToConsole(`Successfully published place [${name}] to Roblox Cloud!`, 'success');
             if (onComplete) onComplete();
-        }, 1500); // 1.5 second simulated latency
+        }, 1200);
     }
 
     getLocalGames() {
-        return JSON.parse(localStorage.getItem('STUDIO_LOCAL_GAMES')) || [];
+        try {
+            return JSON.parse(localStorage.getItem('STUDIO_LOCAL_GAMES')) || [];
+        } catch (e) {
+            return [];
+        }
     }
 
     getCloudGames() {
-        return JSON.parse(localStorage.getItem('STUDIO_CLOUD_GAMES')) || [];
+        try {
+            return JSON.parse(localStorage.getItem('STUDIO_CLOUD_GAMES')) || [];
+        } catch (e) {
+            return [];
+        }
     }
 
     deleteLocalGame(id) {

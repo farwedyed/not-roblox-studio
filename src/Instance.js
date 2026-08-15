@@ -1,7 +1,6 @@
-/* --- START OF FILE Instance.js (REVISED) --- */
-
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { Water as ThreeWater } from 'three/addons/objects/Water.js';
 
 const DB_NAME = "RobloxSandboxDB";
 const STORE_NAME = "importedAssets";
@@ -149,7 +148,6 @@ class RbxSignal {
     }
 }
 
-// Procedural Canvas Texture Generation Library
 const MaterialLibrary = {
     cache: {},
     get(materialName, colorHex) {
@@ -277,9 +275,9 @@ export class Part extends Instance {
             (Math.random() - 0.5) * 30
         );
         this.Color = Math.floor(Math.random() * 16777215);
-        this.MaterialType = 'Plastic'; // Standard Roblox Materials
-        this.isImportedMesh = false; // [3] Avoids overwriting materials on loaded models
-        this.importedAssetId = ""; // Reference to persistent cache
+        this.MaterialType = 'Plastic';
+        this.isImportedMesh = false;
+        this.importedAssetId = "";
 
         this.Anchored = true;
         this.CanCollide = true;
@@ -321,13 +319,16 @@ export class Part extends Instance {
     }
 
     updateMaterialSettings() {
-        if (this.isImportedMesh) return; // [3] Preserve loaded textures
+        if (this.isImportedMesh) return;
 
         if (this.material) this.material.dispose();
 
         if (this.MaterialType === 'Neon') {
-            this.material = new THREE.MeshBasicMaterial({
-                color: this.Color
+            this.material = new THREE.MeshStandardMaterial({
+                color: this.Color,
+                emissive: this.Color,
+                emissiveIntensity: 3.5,
+                roughness: 0.1
             });
         } else if (this.customTextureUrl) {
             const texLoader = new THREE.TextureLoader();
@@ -360,6 +361,10 @@ export class Part extends Instance {
         this.mesh.scale.copy(this.Size);
         this.updateMaterialSettings();
         if (this.mesh) this.mesh.material = this.material;
+        for (const child of this.children) {
+            if (child.updateLight) child.updateLight();
+            else if (child.updateTransform) child.updateTransform();
+        }
     }
 
     onParentChanged(newParent) {
@@ -380,6 +385,277 @@ export class Part extends Instance {
         if (this.mesh.parent) {
             this.mesh.parent.remove(this.mesh);
         }
+        const idx = window.engine.collidableMeshes.indexOf(this.mesh);
+        if (idx > -1) window.engine.collidableMeshes.splice(idx, 1);
+        this.geometry.dispose();
+        this.material.dispose();
+    }
+}
+
+export class LightBlock extends Part {
+    constructor(shape = 'Block') {
+        super(shape);
+        this.ClassName = "LightBlock";
+        this.Name = "Light";
+        this.Color = 0x00f0ff;
+        this.Brightness = 5.0;
+        this.Range = 30;
+        this.Size = new THREE.Vector3(2, 2, 2);
+
+        this.pointLight = new THREE.PointLight(this.Color, this.Brightness * 25, this.Range, 1);
+        this.pointLight.castShadow = true;
+        this.pointLight.shadow.bias = -0.001;
+
+        this.updateTransform();
+    }
+
+    updateMaterialSettings() {
+        if (this.material) this.material.dispose();
+
+        this.material = new THREE.MeshStandardMaterial({
+            color: this.Color,
+            emissive: this.Color,
+            emissiveIntensity: Math.max(1.0, this.Brightness),
+            roughness: 0.1,
+            metalness: 0.2
+        });
+
+        if (this.pointLight) {
+            this.pointLight.color.setHex(this.Color);
+            this.pointLight.intensity = this.Brightness * 25;
+            this.pointLight.distance = this.Range;
+        }
+
+        this.refreshDecals();
+    }
+
+    updateTransform() {
+        this.mesh.position.copy(this.Position);
+        this.mesh.scale.copy(this.Size);
+        this.updateMaterialSettings();
+        if (this.mesh) this.mesh.material = this.material;
+
+        if (this.pointLight && window.engine && window.engine.scene) {
+            if (!this.pointLight.parent) {
+                window.engine.scene.add(this.pointLight);
+            }
+            this.pointLight.position.copy(this.Position);
+        }
+        for (const child of this.children) {
+            if (child.updateLight) child.updateLight();
+            else if (child.updateTransform) child.updateTransform();
+        }
+    }
+
+    onParentChanged(newParent) {
+        super.onParentChanged(newParent);
+        if (isChildOfWorkspace(newParent)) {
+            if (this.pointLight && window.engine && window.engine.scene) {
+                if (!this.pointLight.parent) {
+                    window.engine.scene.add(this.pointLight);
+                }
+                this.pointLight.position.copy(this.Position);
+            }
+        } else {
+            if (this.pointLight && this.pointLight.parent) {
+                this.pointLight.parent.remove(this.pointLight);
+            }
+        }
+    }
+
+    Destroy() {
+        if (this.pointLight) {
+            if (this.pointLight.parent) this.pointLight.parent.remove(this.pointLight);
+            this.pointLight.dispose();
+        }
+        super.Destroy();
+    }
+}
+
+export class Water extends Instance {
+    constructor() {
+        super("Water", "Water");
+        this.Size = new THREE.Vector3(250, 1, 250);
+        this.Position = new THREE.Vector3(0, -0.5, 0);
+        this.Color = 0x0066aa;
+        this.Transparency = 0.25;
+        this.WaveSpeed = 0.8;
+        this.Anchored = true;
+        this.CanCollide = false;
+        this.Locked = false;
+
+        this.geometry = new THREE.PlaneGeometry(1, 1, 32, 32);
+
+        const normLoader = new THREE.TextureLoader();
+        const waterNormals = normLoader.load('https://threejs.org/examples/textures/waternormals.jpg', (t) => {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+        });
+
+        this.waterMesh = new ThreeWater(this.geometry, {
+            textureWidth: 512,
+            textureHeight: 512,
+            waterNormals: waterNormals,
+            sunDirection: new THREE.Vector3(0.5, 1.0, 0.5).normalize(),
+            sunColor: 0xffffff,
+            waterColor: this.Color,
+            distortionScale: 3.7,
+            fog: true
+        });
+
+        this.waterMesh.rotation.x = -Math.PI / 2;
+        this.waterMesh.userData.instance = this;
+        this.mesh = this.waterMesh;
+
+        this.updateTransform();
+    }
+
+    updateWaveAnimation(delta) {
+        if (this.waterMesh && this.waterMesh.material && this.waterMesh.material.uniforms) {
+            this.waterMesh.material.uniforms['time'].value += delta * this.WaveSpeed;
+        }
+    }
+
+    updateTransform() {
+        if (!this.waterMesh) return;
+        this.waterMesh.position.copy(this.Position);
+        this.waterMesh.scale.set(this.Size.x, this.Size.z, 1);
+        if (this.waterMesh.material.uniforms && this.waterMesh.material.uniforms['waterColor']) {
+            this.waterMesh.material.uniforms['waterColor'].value.setHex(this.Color);
+        }
+    }
+
+    onParentChanged(newParent) {
+        if (isChildOfWorkspace(newParent)) {
+            window.engine.scene.add(this.mesh);
+        } else if (this.mesh.parent) {
+            this.mesh.parent.remove(this.mesh);
+        }
+    }
+
+    Destroy() {
+        super.Destroy();
+        if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
+        this.geometry.dispose();
+        if (this.waterMesh.material) this.waterMesh.material.dispose();
+    }
+}
+
+export class Terrain extends Instance {
+    constructor() {
+        super("Terrain", "Terrain");
+        this.Size = new THREE.Vector3(250, 20, 250);
+        this.Position = new THREE.Vector3(0, -5, 0);
+        this.MaterialType = "Grass";
+        this.Anchored = true;
+        this.CanCollide = true;
+        this.Locked = false;
+
+        this.recreateTerrain();
+    }
+
+    recreateTerrain() {
+        if (this.geometry) this.geometry.dispose();
+        if (this.material) this.material.dispose();
+
+        this.geometry = new THREE.PlaneGeometry(1, 1, 128, 128);
+
+        const loader = new THREE.TextureLoader();
+
+        const grassColor = loader.load('./Textures/terrain/grass_color.jpg');
+        const grassNormal = loader.load('./Textures/terrain/grass_normal.jpg');
+        const rockColor = loader.load('./Textures/terrain/rock_color.jpg');
+        const rockNormal = loader.load('./Textures/terrain/rock_normal.jpg');
+
+        [grassColor, grassNormal, rockColor, rockNormal].forEach(t => {
+            t.wrapS = THREE.RepeatWrapping;
+            t.wrapT = THREE.RepeatWrapping;
+            t.repeat.set(16, 16);
+        });
+
+        if (this.MaterialType === "Rock") {
+            this.material = new THREE.MeshStandardMaterial({
+                map: rockColor,
+                normalMap: rockNormal,
+                roughness: 0.9,
+                metalness: 0.05
+            });
+        } else {
+            this.material = new THREE.MeshStandardMaterial({
+                map: grassColor,
+                normalMap: grassNormal,
+                roughness: 0.85,
+                metalness: 0.02
+            });
+        }
+
+        if (this.mesh) {
+            this.mesh.geometry = this.geometry;
+            this.mesh.material = this.material;
+        } else {
+            this.mesh = new THREE.Mesh(this.geometry, this.material);
+            this.mesh.rotation.x = -Math.PI / 2;
+            this.mesh.receiveShadow = true;
+            this.mesh.castShadow = true;
+            this.mesh.userData.instance = this;
+        }
+
+        this.updateTransform();
+    }
+
+    sculpt(worldPoint, radius, strength, mode = 'raise') {
+        if (!this.mesh || !this.geometry) return;
+
+        const localPoint = this.mesh.worldToLocal(worldPoint.clone());
+        const pos = this.geometry.attributes.position;
+        let modified = false;
+
+        for (let i = 0; i < pos.count; i++) {
+            const vx = pos.getX(i);
+            const vy = pos.getY(i);
+            const vz = pos.getZ(i);
+
+            const dist = Math.sqrt((vx - localPoint.x) ** 2 + (vy - localPoint.y) ** 2);
+
+            if (dist < radius) {
+                const falloff = Math.pow(1 - dist / radius, 2);
+                const delta = strength * falloff;
+
+                if (mode === 'raise') {
+                    pos.setZ(i, vz + delta);
+                } else if (mode === 'lower') {
+                    pos.setZ(i, vz - delta);
+                } else if (mode === 'smooth') {
+                    pos.setZ(i, vz + (0 - vz) * delta * 0.5);
+                }
+                modified = true;
+            }
+        }
+
+        if (modified) {
+            pos.needsUpdate = true;
+            this.geometry.computeVertexNormals();
+        }
+    }
+
+    updateTransform() {
+        this.mesh.position.copy(this.Position);
+        this.mesh.scale.set(this.Size.x, this.Size.z, this.Size.y);
+    }
+
+    onParentChanged(newParent) {
+        if (isChildOfWorkspace(newParent)) {
+            window.engine.scene.add(this.mesh);
+            window.engine.collidableMeshes.push(this.mesh);
+        } else {
+            if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
+            const idx = window.engine.collidableMeshes.indexOf(this.mesh);
+            if (idx > -1) window.engine.collidableMeshes.splice(idx, 1);
+        }
+    }
+
+    Destroy() {
+        super.Destroy();
+        if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
         const idx = window.engine.collidableMeshes.indexOf(this.mesh);
         if (idx > -1) window.engine.collidableMeshes.splice(idx, 1);
         this.geometry.dispose();
@@ -461,7 +737,7 @@ export class Decal extends Instance {
     constructor() {
         super("Decal");
         this.TextureId = "";
-        this.Face = "Front"; // Front, Back, Top, Bottom, Left, Right
+        this.Face = "Front";
         this.decalMesh = null;
     }
 
@@ -496,7 +772,7 @@ export class Decal extends Instance {
             } else if (this.Face === "Back") {
                 this.decalMesh.position.set(0, 0, -offset);
                 this.decalMesh.rotation.y = Math.PI;
-            } else { // Front
+            } else {
                 this.decalMesh.position.set(0, 0, offset);
             }
 
@@ -579,20 +855,31 @@ export class PointLight extends Instance {
         this.Range = 15;
         this.Shadows = true;
 
-        this.light = new THREE.PointLight(this.Color, this.Intensity, this.Range);
+        this.light = new THREE.PointLight(this.Color, this.Intensity * 15, this.Range, 1);
         this.light.castShadow = true;
     }
 
     updateLight() {
+        if (!this.light) return;
         this.light.color.setHex(this.Color);
-        this.light.intensity = this.Intensity;
+        this.light.intensity = this.Intensity * 15;
         this.light.distance = this.Range;
         this.light.castShadow = this.Shadows;
+        if (this.Parent && this.Parent.mesh && window.engine && window.engine.scene) {
+            const worldPos = new THREE.Vector3();
+            this.Parent.mesh.getWorldPosition(worldPos);
+            this.light.position.copy(worldPos);
+            if (!this.light.parent) {
+                window.engine.scene.add(this.light);
+            }
+        }
     }
 
     onParentChanged(newParent) {
-        if (newParent && newParent.mesh) {
-            newParent.mesh.add(this.light);
+        if (newParent && newParent.mesh && window.engine && window.engine.scene) {
+            if (!this.light.parent) {
+                window.engine.scene.add(this.light);
+            }
             this.updateLight();
         } else {
             if (this.light.parent) this.light.parent.remove(this.light);
@@ -615,42 +902,60 @@ export class SpotLight extends Instance {
         this.Angle = 45; 
         this.Shadows = true;
 
-        this.light = new THREE.SpotLight(this.Color, this.Intensity, this.Range, THREE.MathUtils.degToRad(this.Angle));
+        this.light = new THREE.SpotLight(this.Color, this.Intensity * 15, this.Range, THREE.MathUtils.degToRad(this.Angle), 0.5, 1);
         this.light.castShadow = true;
     }
 
     updateLight() {
+        if (!this.light) return;
         this.light.color.setHex(this.Color);
-        this.light.intensity = this.Intensity;
+        this.light.intensity = this.Intensity * 15;
         this.light.distance = this.Range;
         this.light.angle = THREE.MathUtils.degToRad(this.Angle);
         this.light.castShadow = this.Shadows;
+        if (this.Parent && this.Parent.mesh && window.engine && window.engine.scene) {
+            const worldPos = new THREE.Vector3();
+            this.Parent.mesh.getWorldPosition(worldPos);
+            this.light.position.copy(worldPos);
+            this.light.target.position.copy(worldPos).add(new THREE.Vector3(0, -5, 0));
+            if (!this.light.parent) {
+                window.engine.scene.add(this.light);
+                window.engine.scene.add(this.light.target);
+            }
+        }
     }
 
     onParentChanged(newParent) {
-        if (newParent && newParent.mesh) {
-            newParent.mesh.add(this.light);
-            this.light.position.set(0, 0, 0);
-            this.light.target.position.set(0, -5, 0);
-            newParent.mesh.add(this.light.target);
+        if (newParent && newParent.mesh && window.engine && window.engine.scene) {
+            if (!this.light.parent) {
+                window.engine.scene.add(this.light);
+                window.engine.scene.add(this.light.target);
+            }
             this.updateLight();
         } else {
             if (this.light.parent) this.light.parent.remove(this.light);
+            if (this.light.target && this.light.target.parent) this.light.target.parent.remove(this.light.target);
         }
     }
 
     Destroy() {
         super.Destroy();
         if (this.light.parent) this.light.parent.remove(this.light);
+        if (this.light.target && this.light.target.parent) this.light.target.parent.remove(this.light.target);
         this.light.dispose();
     }
 }
 
 export class Lighting extends Instance {
     constructor() {
-        super("Lighting");
+        super("Lighting", "Lighting");
         this.ClockTime = 12.0; 
         this.Brightness = 1.0;
+        this.BloomStrength = 0.85; 
+        this.MotionBlur = 1.0;     
+        this.Exposure = 1.0;       
+        this.Rayleigh = 1.0;       
+        this.Turbidity = 1.0;      
         this.Ambient = 0x666666;
     }
     onParentChanged(newParent) {
@@ -661,8 +966,8 @@ export class Lighting extends Instance {
 export class StarterPlayer extends Instance {
     constructor() {
         super("StarterPlayer", "StarterPlayer");
-        this.CharacterWalkSpeed = 8.0;  
-        this.CharacterJumpPower = 12.0; 
+        this.CharacterWalkSpeed = 16.0;  
+        this.CharacterJumpPower = 15.0; 
     }
 }
 
@@ -737,5 +1042,62 @@ export class TextButton extends Frame {
         this.TextWrapped = false;
         this.TextXAlignment = "Center";
         this.TextYAlignment = "Center";
+    }
+}
+
+/* --- ROBLOX PLAYTESTING INSTANCES --- */
+export class Humanoid extends Instance {
+    constructor() {
+        super("Humanoid", "Humanoid");
+        this.Health = 100;
+        this.MaxHealth = 100;
+        this.WalkSpeed = 16.0;
+        this.JumpPower = 15.0; // Default JumpPower set to 15
+        this.HipHeight = 3.3; // Default HipHeight set to 3.3
+        this.DisplayName = "Player1";
+    }
+
+    onParentChanged(newParent) {
+        window.dispatchEvent(new CustomEvent('humanoid-changed', { detail: this }));
+    }
+}
+
+export class Players extends Instance {
+    constructor() {
+        super("Players", "Players");
+    }
+}
+
+export class Player extends Instance {
+    constructor(name = "Player1") {
+        super("Player", name);
+        this.UserId = 1;
+        this.DisplayName = name;
+    }
+}
+
+export class Backpack extends Instance {
+    constructor() {
+        super("Backpack", "Backpack");
+    }
+}
+
+export class PlayerGui extends Instance {
+    constructor() {
+        super("PlayerGui", "PlayerGui");
+    }
+}
+
+export class PlayerScripts extends Instance {
+    constructor() {
+        super("PlayerScripts", "PlayerScripts");
+    }
+}
+
+export class Tool extends Instance {
+    constructor(name = "Classic Tool") {
+        super("Tool", name);
+        this.ToolTip = "Roblox Tool";
+        this.Grip = new THREE.Vector3(0, 0, 0);
     }
 }

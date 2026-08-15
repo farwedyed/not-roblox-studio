@@ -1,26 +1,50 @@
-/* --- START OF FILE StudioUI.js (REVISED) --- */
-
-import { Part, SpawnLocation, Script, LocalScript, Decal, Sound, ScreenGui, Frame, TextLabel, TextButton, Model, PointLight, SpotLight, BillboardGui, SurfaceGui } from './Instance.js';
+import * as THREE from 'three';
+import { Part, LightBlock, SpawnLocation, Water, Terrain, Script, LocalScript, Decal, Sound, ScreenGui, Frame, TextLabel, TextButton, Model, PointLight, SpotLight, BillboardGui, SurfaceGui, Humanoid, Tool, Player } from './Instance.js';
 
 export class StudioUI {
     constructor(explorerRoot) {
         this.gameRoot = explorerRoot;
         this.explorerTree = document.getElementById('explorer-tree');
         this.propertiesGrid = document.getElementById('properties-grid');
-        this.selectedInstances = []; // Holds multiple selected objects
-        this.expandedNodes = new Set(); // Tracks expanded node folders
+        this.viewModelContainer = document.getElementById('viewmodel-container');
+        this.selectedInstances = []; 
+        this.expandedNodes = new Set(); 
         this.searchQuery = "";
+        this._offscreenRenderer = null;
+
+        window.terrainSculptMode = "raise";
+        window.terrainBrushRadius = 15;
+        window.terrainBrushStrength = 0.4;
 
         this.setupEditorModal();
         this.setupButtonEvents();
         this.setupSearch();
 
         window.addEventListener('explorer-changed', () => this.refreshExplorer());
+        window.addEventListener('viewmodel-changed', () => this.refreshViewModelPanel());
+        
         this.refreshExplorer();
+        this.refreshViewModelPanel();
     }
 
     get selectedInstance() {
         return this.selectedInstances[0] || null;
+    }
+
+    getOffscreenRenderer() {
+        if (!this._offscreenRenderer) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 120;
+            canvas.height = 120;
+            this._offscreenRenderer = new THREE.WebGLRenderer({
+                canvas: canvas,
+                antialias: true,
+                alpha: true,
+                preserveDrawingBuffer: true
+            });
+            this._offscreenRenderer.setSize(120, 120);
+        }
+        return this._offscreenRenderer;
     }
 
     setupSearch() {
@@ -37,8 +61,10 @@ export class StudioUI {
         document.querySelectorAll('.dropdown-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 const shape = e.target.getAttribute('data-shape');
-                this.spawnInstanceBySelection(shape);
-                document.getElementById('part-dropdown-menu').style.display = 'none';
+                if (shape) {
+                    this.spawnInstanceBySelection(shape);
+                    document.getElementById('part-dropdown-menu').style.display = 'none';
+                }
             });
         });
 
@@ -51,13 +77,13 @@ export class StudioUI {
             });
         }
 
-        document.getElementById('btn-tool-script').addEventListener('click', () => {
+        document.getElementById('btn-tool-script')?.addEventListener('click', () => {
             const script = new Script();
             script.Parent = this.selectedInstance || this.gameRoot.children.find(c => c.Name === "Workspace");
             this.selectInstance(script);
         });
 
-        document.getElementById('btn-tool-localscript').addEventListener('click', () => {
+        document.getElementById('btn-tool-localscript')?.addEventListener('click', () => {
             const script = new LocalScript();
             script.Parent = this.selectedInstance || this.gameRoot.children.find(c => c.Name === "StarterGui");
             this.selectInstance(script);
@@ -75,11 +101,17 @@ export class StudioUI {
         
         if (shape === "SpawnLocation") {
             instance = new SpawnLocation();
-            instance.Parent = workspace;
+        } else if (shape === "Water") {
+            instance = new Water();
+        } else if (shape === "Terrain") {
+            instance = new Terrain();
+        } else if (shape === "LightBlock" || shape === "Light") {
+            instance = new LightBlock("Block");
         } else {
             instance = new Part(shape);
-            instance.Parent = workspace;
         }
+
+        instance.Parent = workspace;
 
         if (window.engine) {
             window.engine.positionSpawnedPart(instance);
@@ -93,7 +125,7 @@ export class StudioUI {
         this.saveBtn = document.getElementById('btn-save-script');
         this.editingScript = null;
 
-        this.saveBtn.addEventListener('click', () => {
+        this.saveBtn?.addEventListener('click', () => {
             if (this.editingScript) {
                 if (window.engine && window.engine.history) window.engine.history.saveState();
                 this.editingScript.Source = this.codeArea.value;
@@ -109,6 +141,130 @@ export class StudioUI {
         this.codeArea.value = scriptInstance.Source;
         document.getElementById('editor-title').innerText = `Script Editor - ${scriptInstance.Name}`;
         this.modal.style.display = 'flex';
+    }
+
+    refreshViewModelPanel() {
+        if (!this.viewModelContainer) return;
+        this.viewModelContainer.innerHTML = '';
+
+        const folders = window.importedFolderRegistry || {};
+        const folderNames = Object.keys(folders);
+
+        const badge = document.getElementById('viewmodel-count-badge');
+        if (badge) badge.innerText = `${folderNames.length} Folders`;
+
+        if (folderNames.length === 0) {
+            this.viewModelContainer.innerHTML = `
+                <p style="color: #666; font-size: 11px; text-align: center; margin-top: 20px;">
+                    Upload a 3D assets folder via the "Import Folder" button to view and place models here!
+                </p>`;
+            return;
+        }
+
+        folderNames.forEach(folderName => {
+            const modelsList = folders[folderName];
+            const groupDiv = document.createElement('div');
+            groupDiv.className = 'folder-group';
+
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'folder-header';
+            headerDiv.innerHTML = `<span>📁 ${folderName}</span> <span style="margin-left: auto; color: #888; font-size: 10px;">(${modelsList.length} items)</span>`;
+            groupDiv.appendChild(headerDiv);
+
+            const gridDiv = document.createElement('div');
+            gridDiv.className = 'model-cards-grid';
+
+            modelsList.forEach((modelData, idx) => {
+                const card = document.createElement('div');
+                card.className = 'model-card';
+
+                const img = document.createElement('img');
+                img.className = 'model-thumb';
+                img.src = modelData.thumbUrl || '';
+                img.alt = modelData.name;
+
+                const title = document.createElement('div');
+                title.className = 'model-card-title';
+                title.innerText = modelData.name;
+                title.title = modelData.name;
+
+                const btn = document.createElement('button');
+                btn.className = 'model-insert-btn';
+                btn.innerText = '➕ Insert';
+
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.spawnViewModel(folderName, idx);
+                });
+
+                card.appendChild(img);
+                card.appendChild(title);
+                card.appendChild(btn);
+                gridDiv.appendChild(card);
+            });
+
+            groupDiv.appendChild(gridDiv);
+            this.viewModelContainer.appendChild(groupDiv);
+        });
+    }
+
+    spawnViewModel(folderName, index) {
+        const folder = window.importedFolderRegistry?.[folderName];
+        if (!folder || !folder[index]) return;
+
+        const modelEntry = folder[index];
+        if (window.engine && window.engine.history) window.engine.history.saveState();
+
+        const workspace = this.gameRoot.children.find(c => c.Name === "Workspace");
+        const modelInstance = new Model();
+        modelInstance.Name = modelEntry.name;
+        modelInstance.Parent = workspace;
+
+        modelEntry.meshEntries.forEach(meshData => {
+            const part = new Part();
+            part.isImportedMesh = true;
+            part.importedAssetId = meshData.assetId;
+            part.Name = meshData.name;
+
+            window.importedAssets = window.importedAssets || new Map();
+            const cached = window.importedAssets.get(meshData.assetId);
+
+            if (cached) {
+                part.geometry = cached.geometry.clone();
+                part.material = cached.material.clone();
+                part.mesh.geometry = part.geometry;
+                part.mesh.material = part.material;
+            }
+
+            part.Position.copy(meshData.relativePos);
+            part.Parent = modelInstance;
+            part.updateTransform();
+        });
+
+        if (window.engine) {
+            window.engine.positionSpawnedPart(modelInstance);
+            window.engine.logToConsole(`Inserted model "${modelEntry.name}" from folder "${folderName}" into Workspace.`, 'success');
+        }
+
+        this.selectInstance(modelInstance);
+        window.dispatchEvent(new CustomEvent('explorer-changed'));
+    }
+
+    updateToolbarStates() {
+        const btnAnchor = document.getElementById('btn-tool-anchor');
+        const btnLock = document.getElementById('btn-tool-lock');
+
+        if (btnAnchor) {
+            const isAnchored = this.selectedInstances.length > 0 && 
+                this.selectedInstances.every(inst => inst.Anchored === true);
+            btnAnchor.classList.toggle('active', isAnchored);
+        }
+
+        if (btnLock) {
+            const isLocked = this.selectedInstances.length > 0 && 
+                this.selectedInstances.every(inst => inst.Locked === true);
+            btnLock.classList.toggle('active', isLocked);
+        }
     }
 
     selectInstance(instance, addToSelection = false) {
@@ -127,13 +283,12 @@ export class StudioUI {
 
         this.refreshExplorer();
         this.refreshProperties();
+        this.updateToolbarStates();
 
-        // Defensive checks to handle browser caching mismatches gracefully
         if (window.engine) {
             if (typeof window.engine.selectMultipleParts === 'function') {
                 window.engine.selectMultipleParts(this.selectedInstances);
             } else if (typeof window.engine.selectPart === 'function') {
-                // Fallback to older cached selectPart method if main.js hasn't reloaded
                 window.engine.selectPart(instance);
             }
         }
@@ -166,14 +321,16 @@ export class StudioUI {
         menu.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
 
         let options = [];
-        if (parentInstance.Name === "Workspace" || parentInstance.ClassName === "Part" || parentInstance.ClassName === "SpawnLocation" || parentInstance.ClassName === "Model") {
-            options = ["Block", "Sphere", "Cylinder", "Wedge", "SpawnLocation", "Model", "PointLight", "SpotLight", "Script", "LocalScript", "BillboardGui", "SurfaceGui", "Decal", "Sound"];
+        if (parentInstance.Name === "Players" || parentInstance.ClassName === "Players") {
+            options = ["Player"];
+        } else if (parentInstance.Name === "Workspace" || parentInstance.ClassName === "Part" || parentInstance.ClassName === "LightBlock" || parentInstance.ClassName === "SpawnLocation" || parentInstance.ClassName === "Model") {
+            options = ["Block", "Sphere", "Cylinder", "Wedge", "LightBlock", "SpawnLocation", "Terrain", "Water", "Model", "Humanoid", "Tool", "PointLight", "SpotLight", "Script", "LocalScript", "BillboardGui", "SurfaceGui", "Decal", "Sound"];
         } else if (parentInstance.Name === "StarterGui" || parentInstance.ClassName === "ScreenGui" || parentInstance.ClassName === "Frame" || parentInstance.ClassName === "TextLabel" || parentInstance.ClassName === "TextButton" || parentInstance.ClassName === "BillboardGui" || parentInstance.ClassName === "SurfaceGui") {
             options = ["ScreenGui", "Frame", "TextLabel", "TextButton"];
         } else if (parentInstance.Name === "ServerScriptService" || parentInstance.Name === "StarterCharacterScripts") {
             options = ["Script", "LocalScript"];
         } else {
-            options = ["Block", "Sphere", "Cylinder", "Wedge", "SpawnLocation", "Model", "PointLight", "SpotLight", "Script", "LocalScript", "BillboardGui", "SurfaceGui", "ScreenGui", "Frame", "TextLabel", "TextButton", "Decal", "Sound"];
+            options = ["Block", "Sphere", "Cylinder", "Wedge", "LightBlock", "SpawnLocation", "Terrain", "Water", "Model", "Humanoid", "Tool", "PointLight", "SpotLight", "Script", "LocalScript", "BillboardGui", "SurfaceGui", "ScreenGui", "Frame", "TextLabel", "TextButton", "Decal", "Sound", "Player"];
         }
 
         options.forEach(opt => {
@@ -189,7 +346,13 @@ export class StudioUI {
             else if (opt === "Sphere") icon = "🟡";
             else if (opt === "Cylinder") icon = "🧪";
             else if (opt === "Wedge") icon = "📐";
+            else if (opt === "LightBlock") icon = "🌟";
             else if (opt === "SpawnLocation") icon = "🏁";
+            else if (opt === "Terrain") icon = "⛰️";
+            else if (opt === "Water") icon = "🌊";
+            else if (opt === "Humanoid") icon = "🏃";
+            else if (opt === "Player") icon = "👤";
+            else if (opt === "Tool") icon = "🗡️";
             else if (opt === "Script") icon = "📜";
             else if (opt === "LocalScript") icon = "💻";
             else if (opt === "Model") icon = "📦";
@@ -211,6 +374,12 @@ export class StudioUI {
                 
                 let child;
                 if (opt === "SpawnLocation") child = new SpawnLocation();
+                else if (opt === "Humanoid") child = new Humanoid();
+                else if (opt === "Player") child = new Player(`Player${parentInstance.children.length + 1}`);
+                else if (opt === "Tool") child = new Tool();
+                else if (opt === "LightBlock") child = new LightBlock();
+                else if (opt === "Terrain") child = new Terrain();
+                else if (opt === "Water") child = new Water();
                 else if (opt === "Script") child = new Script();
                 else if (opt === "LocalScript") child = new LocalScript();
                 else if (opt === "Model") child = new Model();
@@ -281,7 +450,17 @@ export class StudioUI {
                 else if (instance.Shape === "Wedge") icon = "📐";
                 else icon = "🧱";
             }
+            if (instance.ClassName === "Humanoid") icon = "🏃";
+            if (instance.ClassName === "Players") icon = "👥";
+            if (instance.ClassName === "Player") icon = "👤";
+            if (instance.ClassName === "Backpack") icon = "🎒";
+            if (instance.ClassName === "PlayerGui") icon = "🖥️";
+            if (instance.ClassName === "PlayerScripts") icon = "📜";
+            if (instance.ClassName === "Tool") icon = "🗡️";
+            if (instance.ClassName === "LightBlock") icon = "🌟";
             if (instance.ClassName === "SpawnLocation") icon = "🏁";
+            if (instance.ClassName === "Terrain") icon = "⛰️";
+            if (instance.ClassName === "Water") icon = "🌊";
             if (instance.ClassName === "Script") icon = "📜";
             if (instance.ClassName === "LocalScript") icon = "💻";
             if (instance.ClassName === "Model") icon = "📦";
@@ -332,11 +511,10 @@ export class StudioUI {
                 this.showInsertMenu(e.clientX, e.clientY, instance);
             });
 
-            // Lock & Collision direct Explorer toggle buttons
             const actionsDiv = document.createElement('div');
             actionsDiv.className = 'explorer-actions';
             
-            if (instance.ClassName === "Part" || instance.ClassName === "SpawnLocation") {
+            if (instance.ClassName === "Part" || instance.ClassName === "LightBlock" || instance.ClassName === "SpawnLocation" || instance.ClassName === "Terrain" || instance.ClassName === "Water") {
                 const lockBtn = document.createElement('button');
                 lockBtn.className = 'explorer-action-btn';
                 lockBtn.innerText = instance.Locked ? '🔒' : '🔓';
@@ -346,6 +524,7 @@ export class StudioUI {
                     instance.Locked = !instance.Locked;
                     this.refreshExplorer();
                     this.refreshProperties();
+                    this.updateToolbarStates();
                 });
                 actionsDiv.appendChild(lockBtn);
 
@@ -431,13 +610,14 @@ export class StudioUI {
         this.propertiesGrid.innerHTML = '';
         const header = document.getElementById('properties-panel-header');
 
+        this.updateToolbarStates();
+
         if (this.selectedInstances.length === 0) {
             header.innerText = "Properties";
             this.propertiesGrid.innerHTML = '<p style="color: #666; font-size: 12px; text-align: center; margin-top: 20px;">Select an item to view properties</p>';
             return;
         }
 
-        // Multi-Selection Header details
         if (this.selectedInstances.length > 1) {
             header.innerText = `Properties - ${this.selectedInstances.length} items`;
             this.propertiesGrid.innerHTML = '<p style="color: #666; font-size: 12px; text-align: center; margin-top: 20px;">Multi-edit common properties below</p>';
@@ -483,6 +663,7 @@ export class StudioUI {
             select.addEventListener('change', (e) => {
                 if (window.engine && window.engine.history) window.engine.history.saveState();
                 this.selectedInstances.forEach(inst => onChange(inst, e.target.value));
+                this.updateToolbarStates();
             });
             
             row.appendChild(select);
@@ -513,7 +694,6 @@ export class StudioUI {
             this.propertiesGrid.appendChild(row);
         };
 
-        // Roblox BrickColor grid panel presets
         const addBrickColorProperty = (label, currentColorHex, onChange) => {
             const row = document.createElement('div');
             row.className = 'property-row';
@@ -548,9 +728,98 @@ export class StudioUI {
 
         addProperty("Name", primary.Name, (inst, val) => {
             inst.Name = val;
-            this.refreshExplorer();
+            window.dispatchEvent(new CustomEvent('explorer-changed'));
         });
         addProperty("ClassName", primary.ClassName, () => {});
+
+        // --- PLAYER PROPERTIES ---
+        if (primary.ClassName === "Player") {
+            addProperty("DisplayName", primary.DisplayName || primary.Name, (inst, val) => {
+                inst.DisplayName = val;
+                window.dispatchEvent(new CustomEvent('explorer-changed'));
+            });
+            addProperty("UserId", primary.UserId !== undefined ? primary.UserId : 1, (inst, val) => {
+                inst.UserId = parseInt(val) || 1;
+                window.dispatchEvent(new CustomEvent('explorer-changed'));
+            });
+        }
+
+        // --- HUMANOID PROPERTIES ---
+        if (primary.ClassName === "Humanoid") {
+            addProperty("HipHeight (Height Adjuster)", primary.HipHeight !== undefined ? primary.HipHeight : 2.0, (inst, val) => {
+                inst.HipHeight = Math.max(0.2, parseFloat(val) || 2.0);
+            });
+            addProperty("Health", primary.Health !== undefined ? primary.Health : 100, (inst, val) => {
+                inst.Health = Math.max(0, parseFloat(val) || 0);
+            });
+            addProperty("MaxHealth", primary.MaxHealth !== undefined ? primary.MaxHealth : 100, (inst, val) => {
+                inst.MaxHealth = Math.max(1, parseFloat(val) || 100);
+            });
+            addProperty("WalkSpeed", primary.WalkSpeed !== undefined ? primary.WalkSpeed : 16.0, (inst, val) => {
+                inst.WalkSpeed = Math.max(0, parseFloat(val) || 16.0);
+            });
+            addProperty("JumpPower", primary.JumpPower !== undefined ? primary.JumpPower : 50.0, (inst, val) => {
+                inst.JumpPower = Math.max(0, parseFloat(val) || 50.0);
+            });
+            addProperty("DisplayName", primary.DisplayName || "Player1", (inst, val) => {
+                inst.DisplayName = val;
+            });
+        }
+
+        if (primary.ClassName === "LightBlock") {
+            addDropdownProperty("Shape", primary.Shape, ['Block', 'Sphere', 'Cylinder', 'Wedge'], (inst, val) => {
+                inst.Shape = val;
+                inst.recreateGeometry();
+                this.refreshExplorer();
+            });
+
+            addBrickColorProperty("Glow Color Swatches", primary.Color, (inst, val) => {
+                inst.Color = val;
+                inst.updateTransform();
+            });
+
+            addColorProperty("Light Color", primary.Color, (inst, val) => {
+                inst.Color = val;
+                inst.updateTransform();
+            });
+
+            addProperty("Brightness", primary.Brightness, (inst, val) => {
+                inst.Brightness = Math.max(0, parseFloat(val) || 5.0);
+                inst.updateTransform();
+            });
+
+            addProperty("Light Range", primary.Range, (inst, val) => {
+                inst.Range = Math.max(1, parseFloat(val) || 30);
+                inst.updateTransform();
+            });
+
+            addDropdownProperty("Anchored", primary.Anchored ? "true" : "false", ["true", "false"], (inst, val) => {
+                inst.Anchored = (val === "true");
+                this.updateToolbarStates();
+            });
+            addDropdownProperty("CanCollide", primary.CanCollide ? "true" : "false", ["true", "false"], (inst, val) => {
+                inst.CanCollide = (val === "true");
+            });
+            addDropdownProperty("Locked", primary.Locked ? "true" : "false", ["true", "false"], (inst, val) => {
+                inst.Locked = (val === "true");
+                this.updateToolbarStates();
+            });
+
+            addProperty("Size (X,Y,Z)", `${primary.Size.x}, ${primary.Size.y}, ${primary.Size.z}`, (inst, val) => {
+                const parts = val.split(',').map(Number);
+                if (parts.length === 3 && !parts.some(isNaN)) {
+                    inst.Size.set(parts[0], parts[1], parts[2]);
+                    inst.updateTransform();
+                }
+            });
+            addProperty("Pos (X,Y,Z)", `${primary.Position.x}, ${primary.Position.y}, ${primary.Position.z}`, (inst, val) => {
+                const parts = val.split(',').map(Number);
+                if (parts.length === 3 && !parts.some(isNaN)) {
+                    inst.Position.set(parts[0], parts[1], parts[2]);
+                    inst.updateTransform();
+                }
+            });
+        }
 
         if (primary.ClassName === "Part" || primary.ClassName === "SpawnLocation") {
             addDropdownProperty("Shape", primary.Shape, ['Block', 'Sphere', 'Cylinder', 'Wedge'], (inst, val) => {
@@ -576,9 +845,14 @@ export class StudioUI {
             
             addDropdownProperty("Anchored", primary.Anchored ? "true" : "false", ["true", "false"], (inst, val) => {
                 inst.Anchored = (val === "true");
+                this.updateToolbarStates();
             });
             addDropdownProperty("CanCollide", primary.CanCollide ? "true" : "false", ["true", "false"], (inst, val) => {
                 inst.CanCollide = (val === "true");
+            });
+            addDropdownProperty("Locked", primary.Locked ? "true" : "false", ["true", "false"], (inst, val) => {
+                inst.Locked = (val === "true");
+                this.updateToolbarStates();
             });
 
             addProperty("Size (X,Y,Z)", `${primary.Size.x}, ${primary.Size.y}, ${primary.Size.z}`, (inst, val) => {
@@ -593,6 +867,64 @@ export class StudioUI {
                 if (parts.length === 3 && !parts.some(isNaN)) {
                     inst.Position.set(parts[0], parts[1], parts[2]);
                     inst.updateTransform();
+                }
+            });
+        }
+
+        if (primary.ClassName === "Water") {
+            addColorProperty("Color", primary.Color, (inst, val) => {
+                inst.Color = val;
+                inst.updateTransform();
+            });
+            addProperty("Transparency (0-1)", primary.Transparency, (inst, val) => {
+                inst.Transparency = Math.max(0, Math.min(1, parseFloat(val) || 0));
+                inst.updateTransform();
+            });
+            addProperty("WaveSpeed", primary.WaveSpeed, (inst, val) => {
+                inst.WaveSpeed = parseFloat(val) || 0.8;
+            });
+            addProperty("Size (X,Y,Z)", `${primary.Size.x}, ${primary.Size.y}, ${primary.Size.z}`, (inst, val) => {
+                const parts = val.split(',').map(Number);
+                if (parts.length === 3 && !parts.some(isNaN)) {
+                    inst.Size.set(parts[0], parts[1], parts[2]);
+                    inst.updateTransform();
+                }
+            });
+            addProperty("Pos (X,Y,Z)", `${primary.Position.x}, ${primary.Position.y}, ${primary.Position.z}`, (inst, val) => {
+                const parts = val.split(',').map(Number);
+                if (parts.length === 3 && !parts.some(isNaN)) {
+                    inst.Position.set(parts[0], parts[1], parts[2]);
+                    inst.updateTransform();
+                }
+            });
+        }
+
+        if (primary.ClassName === "Terrain") {
+            addDropdownProperty("Sculpt Mode", window.terrainSculptMode || "raise", ["raise", "lower", "smooth"], (inst, val) => {
+                window.terrainSculptMode = val;
+            });
+            addProperty("Brush Radius", window.terrainBrushRadius || 15, (inst, val) => {
+                window.terrainBrushRadius = Math.max(2, parseFloat(val) || 15);
+            });
+            addProperty("Brush Strength", window.terrainBrushStrength || 0.4, (inst, val) => {
+                window.terrainBrushStrength = Math.max(0.05, parseFloat(val) || 0.4);
+            });
+            addDropdownProperty("Material", primary.MaterialType, ["Grass", "Rock"], (inst, val) => {
+                inst.MaterialType = val;
+                inst.recreateTerrain();
+            });
+            addProperty("Size (X,Y,Z)", `${primary.Size.x}, ${primary.Size.y}, ${primary.Size.z}`, (inst, val) => {
+                const parts = val.split(',').map(Number);
+                if (parts.length === 3 && !parts.some(isNaN)) {
+                    primary.Size.set(parts[0], parts[1], parts[2]);
+                    primary.updateTransform();
+                }
+            });
+            addProperty("Pos (X,Y,Z)", `${primary.Position.x}, ${primary.Position.y}, ${primary.Position.z}`, (inst, val) => {
+                const parts = val.split(',').map(Number);
+                if (parts.length === 3 && !parts.some(isNaN)) {
+                    primary.Position.set(parts[0], parts[1], parts[2]);
+                    primary.updateTransform();
                 }
             });
         }
@@ -620,16 +952,32 @@ export class StudioUI {
         }
 
         if (primary.ClassName === "Lighting") {
-            addProperty("ClockTime (0-24)", primary.ClockTime, (inst, val) => {
-                inst.ClockTime = Math.max(0, Math.min(24, parseFloat(val) || 12));
+            addProperty("Time of Day (ClockTime 0-24)", primary.ClockTime !== undefined ? primary.ClockTime : 12.0, (inst, val) => {
+                inst.ClockTime = Math.max(0, Math.min(24, parseFloat(val) || 12.0));
                 window.dispatchEvent(new CustomEvent('lighting-changed'));
             });
-            addProperty("Brightness (0-2)", primary.Brightness, (inst, val) => {
-                inst.Brightness = Math.max(0, Math.min(2, parseFloat(val) || 1));
+            addProperty("Sun Brightness (0-5)", primary.Brightness !== undefined ? primary.Brightness : 1.0, (inst, val) => {
+                inst.Brightness = Math.max(0, parseFloat(val) || 1.0);
                 window.dispatchEvent(new CustomEvent('lighting-changed'));
             });
-            addColorProperty("Ambient", primary.Ambient, (inst, val) => {
-                inst.Ambient = val;
+            addProperty("Bloom Glow Strength (0-3)", primary.BloomStrength !== undefined ? primary.BloomStrength : 0.85, (inst, val) => {
+                inst.BloomStrength = Math.max(0, Math.min(3, parseFloat(val) || 0.85));
+                window.dispatchEvent(new CustomEvent('lighting-changed'));
+            });
+            addProperty("Motion Blur Intensity (0-3)", primary.MotionBlur !== undefined ? primary.MotionBlur : 1.0, (inst, val) => {
+                inst.MotionBlur = Math.max(0, Math.min(3, parseFloat(val) || 1.0));
+                window.dispatchEvent(new CustomEvent('lighting-changed'));
+            });
+            addProperty("Tone Mapping Exposure (0.1-3)", primary.Exposure !== undefined ? primary.Exposure : 1.0, (inst, val) => {
+                inst.Exposure = Math.max(0.1, Math.min(3, parseFloat(val) || 1.0));
+                window.dispatchEvent(new CustomEvent('lighting-changed'));
+            });
+            addProperty("Sky Rayleigh Scattering (0-5)", primary.Rayleigh !== undefined ? primary.Rayleigh : 1.0, (inst, val) => {
+                inst.Rayleigh = Math.max(0, Math.min(5, parseFloat(val) || 1.0));
+                window.dispatchEvent(new CustomEvent('lighting-changed'));
+            });
+            addProperty("Atmospheric Turbidity (0-5)", primary.Turbidity !== undefined ? primary.Turbidity : 1.0, (inst, val) => {
+                inst.Turbidity = Math.max(0, Math.min(5, parseFloat(val) || 1.0));
                 window.dispatchEvent(new CustomEvent('lighting-changed'));
             });
         }

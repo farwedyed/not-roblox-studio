@@ -15,26 +15,41 @@
             display: flex; flex-direction: column; width: 100%; height: 100%;
         }
 
-        /* --- RIBBON TAB MENU --- */
+        #studio-header-bar {
+            height: 30px; background-color: #1e1e1e; display: flex; align-items: center;
+            padding: 0 10px; border-bottom: 1px solid #2a2a2a; gap: 12px; font-size: 12px;
+        }
+        .studio-logo-badge {
+            background-color: #007acc; color: white; padding: 2px 7px; border-radius: 3px;
+            font-weight: 900; font-size: 12px;
+        }
+        #project-title-display {
+            font-weight: bold; color: #e0e0e0; font-size: 12px; letter-spacing: 0.3px;
+        }
+
         #ribbon-menu {
-            height: 25px; background-color: #252526; display: flex; align-items: center;
-            border-bottom: 1px solid #333; padding: 0 10px; gap: 5px;
+            height: 26px; background-color: #252526; display: flex; align-items: center;
+            border-bottom: 1px solid #333; padding: 0 6px; gap: 4px;
         }
         .ribbon-tab {
             font-size: 11px; text-transform: uppercase; font-weight: bold; padding: 4px 12px;
-            cursor: pointer; color: #888; border-radius: 3px 3px 0 0; transition: color 0.1s;
+            cursor: pointer; color: #aaa; border-radius: 3px 3px 0 0; transition: color 0.1s, background-color 0.1s;
         }
-        .ribbon-tab:hover { color: #fff; }
+        .ribbon-tab:hover { color: #fff; background-color: #333; }
         .ribbon-tab.selected { background-color: #2d2d2d; color: #007acc; border-bottom: 2px solid #007acc; }
 
-        /* Top Toolbar layout */
+        .file-tab-btn {
+            background-color: #007acc !important; color: white !important; border-radius: 3px; margin-right: 6px;
+        }
+        .file-tab-btn:hover { background-color: #005c99 !important; }
+
         #toolbar {
             height: 48px; background-color: #2d2d2d; border-bottom: 1px solid #3e3e3e;
-            display: flex; align-items: center; padding: 0 15px; gap: 10px; z-index: 100;
+            display: flex; align-items: center; padding: 0 12px; gap: 8px; z-index: 100;
         }
         .toolbar-group {
             display: flex; align-items: center; gap: 6px; border-right: 1px solid #3c3c3c;
-            padding-right: 10px; height: 100%;
+            padding-right: 8px; height: 100%;
         }
         .toolbar-group:last-child { border-right: none; }
 
@@ -42,104 +57,336 @@
             background-color: #3a3a3a; border: 1px solid #555; color: white;
             padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
             font-weight: 600; display: flex; align-items: center; gap: 5px;
-            outline: none; transition: background-color 0.15s;
+            outline: none; transition: all 0.15s ease-in-out;
         }
         .tool-btn:hover, .toolbar-select:hover { background-color: #4a4a4a; }
-        .tool-btn.active { background-color: #007acc; border-color: #0098ff; }
         
-        /* Dropdown custom selectors */
+        .tool-btn.active {
+            background-color: #007acc !important;
+            border-color: #00a2ff !important;
+            box-shadow: 0 0 6px rgba(0, 152, 255, 0.6);
+            color: #ffffff !important;
+        }
+        
         .dropdown-container { position: relative; display: inline-block; }
         .dropdown-menu {
             position: absolute; top: 100%; left: 0; background-color: #252526;
             border: 1px solid #3c3c3c; border-radius: 4px; z-index: 1000; display: none;
-            flex-direction: column; min-width: 120px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            flex-direction: column; min-width: 150px; box-shadow: 0 6px 16px rgba(0,0,0,0.6);
         }
         .dropdown-item {
-            padding: 6px 12px; font-size: 12px; color: #fff; cursor: pointer;
+            padding: 8px 12px; font-size: 12px; color: #fff; cursor: pointer; display: flex; align-items: center; gap: 8px;
         }
         .dropdown-item:hover { background-color: #007acc; }
 
         .snap-input-group {
-            display: flex; align-items: center; gap: 6px; font-size: 12px; color: #aaa;
+            display: flex; align-items: center; gap: 5px; font-size: 11px; color: #aaa;
         }
         .snap-input {
-            width: 45px; background-color: #1a1a1a; border: 1px solid #444; color: white;
-            padding: 3px 6px; border-radius: 3px; font-family: monospace; font-size: 12px;
+            width: 42px; background-color: #1a1a1a; border: 1px solid #444; color: white;
+            padding: 3px 5px; border-radius: 3px; font-family: monospace; font-size: 11px;
             outline: none;
         }
 
-        /* Main Workspace Panels */
         #workspace-area {
-            display: flex; flex: 1; position: relative; width: 100%; overflow: hidden;
+            display: flex; flex: 1; position: relative; width: 100%; height: 100%; overflow: hidden;
         }
+        
+        .dock-sidebar {
+            background-color: #222; display: flex; flex-direction: column; height: 100%; overflow: hidden;
+        }
+        #sidebar-left { border-right: 1px solid #333; }
+        #sidebar-right { border-left: 1px solid #333; }
+
         #center-viewport {
-            flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden;
+            flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; position: relative;
         }
         #canvas-container {
             flex: 1; position: relative; background-color: #000;
         }
 
-        /* Dynamic 2D GUI Overlay Container */
         #gui-viewport {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             pointer-events: none; overflow: hidden; z-index: 10;
         }
 
-        /* Sidebar Panels */
-        #sidebar {
-            width: 280px; background-color: #222; border-left: 1px solid #333;
-            display: flex; flex-direction: column; height: 100%;
+        /* ROBLOX TOP BAR & IN-GAME OVERLAYS */
+        #roblox-top-bar {
+            position: absolute; top: 12px; left: 12px; z-index: 200; display: none;
+            align-items: center; gap: 4px; background: rgba(0, 0, 0, 0.55);
+            padding: 4px 8px; border-radius: 20px; backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
+        .top-bar-btn {
+            background: none; border: none; color: #fff; width: 32px; height: 32px;
+            border-radius: 50%; cursor: pointer; display: flex; align-items: center;
+            justify-content: center; font-size: 16px; transition: background 0.15s;
+        }
+        .top-bar-btn:hover { background: rgba(255, 255, 255, 0.15); }
+
+        #roblox-player-list {
+            position: absolute; top: 12px; right: 12px; z-index: 200; display: none;
+            width: 170px; background: rgba(0, 0, 0, 0.55); border-radius: 8px;
+            padding: 8px; backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+        .player-list-header {
+            font-size: 11px; font-weight: bold; color: #aaa; text-transform: uppercase;
+            margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;
+        }
+        .player-list-item {
+            display: flex; align-items: center; gap: 8px; padding: 4px 6px;
+            border-radius: 4px; font-size: 12px; color: #fff;
+        }
+        .player-list-item:hover { background: rgba(255, 255, 255, 0.1); }
+        .player-avatar-badge {
+            width: 18px; height: 18px; background: #007acc; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold;
+        }
+
+        /* ROBLOX IN-GAME CHAT OVERLAY */
+        #roblox-chat-container {
+            position: absolute; top: 55px; left: 12px; width: 320px; height: 200px;
+            background-color: rgba(0, 0, 0, 0.45); border-radius: 6px; z-index: 15;
+            display: none; flex-direction: column; padding: 10px; box-sizing: border-box;
+            backdrop-filter: blur(4px); border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #chat-messages {
+            flex: 1; overflow-y: auto; font-size: 12px; font-family: sans-serif;
+            text-shadow: 1px 1px 2px black; word-break: break-word;
+        }
+        #chat-input-box {
+            height: 30px; margin-top: 6px; display: flex;
+        }
+        #chat-input {
+            width: 100%; background-color: rgba(0, 0, 0, 0.6); border: 1px solid #555;
+            color: white; border-radius: 4px; padding: 0 8px; font-size: 12px; outline: none;
+        }
+
+        /* ROBLOX FLOATING CHAT BUBBLE STACK STYLE */
+        .roblox-chat-stack-container {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+            pointer-events: none;
+            transform: translate(-50%, -100%);
+            z-index: 100;
+        }
+
+        .roblox-chat-bubble {
+            background: #ffffff;
+            color: #111111;
+            padding: 8px 14px;
+            border-radius: 14px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+            pointer-events: none;
+            white-space: nowrap;
+            position: relative;
+            animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transition: opacity 0.3s ease;
+        }
+
+        .roblox-chat-stack-container .roblox-chat-bubble:last-child::after {
+            content: '';
+            position: absolute;
+            bottom: -7px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 7px 7px 0;
+            border-style: solid;
+            border-color: #ffffff transparent;
+            display: block;
+            width: 0;
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0.6); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* ROBLOX PAUSE ESCAPE MENU UI */
+        #roblox-escape-menu {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            background-color: rgba(8, 12, 10, 0.85); display: none; 
+            justify-content: center; align-items: center; z-index: 100000; font-family: sans-serif;
+            backdrop-filter: blur(10px);
+        }
+        .esc-menu-container {
+            width: 760px; max-width: 90%; height: 560px; max-height: 90%;
+            background-color: #121814; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7); display: flex; flex-direction: column; overflow: hidden;
+        }
+        .esc-nav-tabs {
+            height: 48px; background-color: #1a221b; display: flex; align-items: center;
+            padding: 0 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); gap: 24px;
+        }
+        .esc-tab-item {
+            font-size: 14px; font-weight: bold; color: #888; cursor: pointer;
+            padding: 12px 4px; border-bottom: 3px solid transparent; transition: all 0.15s;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .esc-tab-item:hover { color: #fff; }
+        .esc-tab-item.active { color: #28a745; border-bottom-color: #28a745; }
+
+        .esc-menu-body {
+            flex: 1; overflow-y: auto; padding: 20px 28px;
+        }
+        .esc-section-title {
+            font-size: 15px; font-weight: bold; color: #fff; margin-bottom: 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 6px;
+        }
+        .esc-setting-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04); font-size: 13px; color: #ddd;
+        }
+        .esc-setting-control {
+            display: flex; align-items: center; gap: 10px;
+        }
+        .esc-input-slider {
+            width: 140px; accent-color: #28a745; cursor: pointer;
+        }
+        .esc-select-box {
+            background-color: #222d24; border: 1px solid #3d4a3f; color: white;
+            padding: 5px 12px; border-radius: 4px; font-size: 12px; outline: none; cursor: pointer;
+        }
+        .esc-toggle-btn {
+            background-color: #222d24; border: 1px solid #3d4a3f; color: white;
+            padding: 5px 14px; border-radius: 14px; font-size: 12px; cursor: pointer; min-width: 60px; text-align: center;
+        }
+        .esc-toggle-btn.on { background-color: #28a745; border-color: #34ce57; color: #fff; }
+
+        .esc-player-cards-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px;
+        }
+        .esc-player-card {
+            background: #1a221b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px;
+            padding: 12px; display: flex; align-items: center; gap: 12px;
+        }
+        .esc-player-avatar {
+            width: 42px; height: 42px; background: #007acc; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold;
+        }
+        .esc-player-info { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow: hidden; }
+        .esc-player-name { font-size: 13px; font-weight: bold; color: #fff; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+        .esc-player-user { font-size: 11px; color: #888; }
+        .esc-add-friend-btn {
+            background: rgba(255,255,255,0.1); border: none; color: #fff; width: 28px; height: 28px;
+            border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px;
+        }
+        .esc-add-friend-btn:hover { background: #007acc; }
+
+        .esc-bottom-bar {
+            height: 64px; background-color: #161e17; border-top: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex; align-items: center; justify-content: space-between; padding: 0 24px; gap: 12px;
+        }
+        .esc-action-btn {
+            flex: 1; height: 40px; border-radius: 6px; border: none; font-size: 13px; font-weight: bold;
+            color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+            transition: background 0.15s;
+        }
+        .esc-btn-leave { background-color: #38423a; }
+        .esc-btn-leave:hover { background-color: #4a544a; }
+        .esc-btn-reset { background-color: #c82333; }
+        .esc-btn-reset:hover { background-color: #bd2130; }
+        .esc-btn-resume { background-color: #005c99; }
+        .esc-btn-resume:hover { background-color: #007acc; }
+
         .panel {
             flex: 1; display: flex; flex-direction: column; border-bottom: 1px solid #333;
-            overflow: hidden;
+            overflow: hidden; min-height: 120px; background-color: #222;
         }
         .panel:last-child { border-bottom: none; }
         .panel-header {
-            background-color: #2d2d2d; padding: 8px 12px; font-size: 12px;
+            background-color: #2d2d2d; padding: 6px 10px; font-size: 11px;
             text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold;
-            border-bottom: 1px solid #3a3a3a; color: #aaa;
+            border-bottom: 1px solid #3a3a3a; color: #aaa; display: flex; justify-content: space-between; align-items: center;
+            user-select: none;
         }
         .panel-content { flex: 1; overflow-y: auto; padding: 5px; }
 
-        /* Search Box */
+        .floating-panel {
+            position: fixed !important; box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            border: 1px solid #007acc !important; border-radius: 6px; z-index: 10000;
+        }
+
+        .dock-indicator {
+            position: absolute; background-color: rgba(0, 152, 255, 0.25);
+            border: 2px dashed #0098ff; z-index: 100000; pointer-events: none; display: none;
+        }
+        #dock-indicator-left { top: 0; left: 0; width: 220px; height: 100%; }
+        #dock-indicator-right { top: 0; right: 0; width: 220px; height: 100%; }
+        #dock-indicator-bottom { bottom: 0; left: 0; width: 100%; height: 160px; }
+
+        .folder-group {
+            background-color: #1a1a1a; border: 1px solid #333; border-radius: 4px;
+            margin-bottom: 8px; overflow: hidden;
+        }
+        .folder-header {
+            background-color: #2a2a2a; padding: 6px 10px; font-size: 12px; font-weight: bold;
+            color: #00a2ff; cursor: pointer; display: flex; align-items: center; gap: 6px;
+            border-bottom: 1px solid #333;
+        }
+        .folder-header:hover { background-color: #333; }
+        .model-cards-grid {
+            display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 6px;
+        }
+        .model-card {
+            background-color: #252526; border: 1px solid #3c3c3c; border-radius: 4px;
+            padding: 6px; display: flex; flex-direction: column; align-items: center;
+            gap: 4px; transition: border-color 0.15s;
+        }
+        .model-card:hover { border-color: #007acc; }
+        .model-thumb {
+            width: 100%; height: 75px; background-color: #111; border-radius: 3px;
+            object-fit: contain; border: 1px solid #222;
+        }
+        .model-card-title {
+            font-size: 10px; font-weight: bold; color: #ddd; width: 100%;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
+        }
+        .model-insert-btn {
+            width: 100%; background-color: #007acc; color: white; border: none;
+            border-radius: 3px; padding: 3px 0; font-size: 10px; font-weight: bold;
+            cursor: pointer; transition: background-color 0.1s;
+        }
+        .model-insert-btn:hover { background-color: #005c99; }
+
         .search-container { padding: 4px; display: flex; background-color: #1e1e1e; border-bottom: 1px solid #2d2d2d; }
         .search-box {
             flex: 1; background-color: #2d2d2d; border: 1px solid #3c3c3c; color: #fff;
             padding: 4px 8px; border-radius: 4px; font-size: 11px; outline: none;
         }
 
-        /* Bottom Console Pane */
         #bottom-panel {
-            height: 160px; background-color: #1a1a1a; border-top: 1px solid #333;
-            display: flex; flex-direction: column;
+            height: 160px; background-color: #1a1a1a; display: flex; flex-direction: column;
         }
         #console-output {
             flex: 1; overflow-y: auto; padding: 10px; font-family: 'Consolas', monospace;
-            font-size: 13px; color: #d4d4d4; white-space: pre-wrap; user-select: text;
+            font-size: 12px; color: #d4d4d4; white-space: pre-wrap; user-select: text;
         }
         #command-bar-container {
             display: flex; height: 30px; border-top: 1px solid #333;
         }
         #command-bar {
             flex: 1; background-color: #1e1e1e; border: none; color: #fff;
-            padding: 0 10px; font-family: 'Consolas', monospace; font-size: 13px; outline: none;
+            padding: 0 10px; font-family: 'Consolas', monospace; font-size: 12px; outline: none;
         }
 
-        /* Panel Resizing Splitters */
-        #sidebar-splitter {
-            width: 4px; background-color: #333; cursor: ew-resize; z-index: 1000; transition: background-color 0.15s;
+        .dock-splitter {
+            background-color: #333; z-index: 1000; transition: background-color 0.15s;
         }
-        #sidebar-splitter:hover { background-color: #007acc; }
-        #console-splitter {
-            height: 4px; background-color: #333; cursor: ns-resize; z-index: 1000; transition: background-color 0.15s;
-        }
-        #console-splitter:hover { background-color: #007acc; }
+        .dock-splitter:hover { background-color: #007acc; }
+        .vertical-splitter { width: 4px; cursor: ew-resize; }
+        .horizontal-splitter { height: 4px; cursor: ns-resize; }
 
-        /* Explorer Tree Style */
         .explorer-item {
             padding: 4px 28px 4px 6px; 
-            font-size: 13px; cursor: pointer; border-radius: 3px;
+            font-size: 12px; cursor: pointer; border-radius: 3px;
             display: flex; align-items: center; gap: 6px; margin: 1px 0;
             position: relative; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
         }
@@ -170,18 +417,16 @@
         }
         .explorer-action-btn:hover { color: #fff; }
 
-        /* Properties Form Style */
         .property-row {
-            display: flex; align-items: center; padding: 4px 6px; font-size: 13px; border-bottom: 1px solid #2d2d2d;
+            display: flex; align-items: center; padding: 4px 6px; font-size: 12px; border-bottom: 1px solid #2d2d2d;
         }
         .property-label { width: 115px; color: #aaa; overflow: hidden; text-overflow: ellipsis; }
         .property-value {
             flex: 1; background-color: #1a1a1a; border: 1px solid #444; color: white;
-            padding: 3px 6px; border-radius: 3px; font-family: monospace; font-size: 12px;
+            padding: 3px 6px; border-radius: 3px; font-family: monospace; font-size: 11px;
             box-sizing: border-box; outline: none; height: 24px;
         }
 
-        /* Hex BrickColors Palette Grid */
         .palette-grid {
             display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; padding: 6px;
             background-color: #252526; border: 1px solid #3c3c3c; border-radius: 4px;
@@ -191,7 +436,6 @@
         }
         .palette-color:hover { border-color: #fff; }
 
-        /* Script Code Editor overlay modal */
         #script-editor-modal {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background-color: rgba(10,10,10,0.85); z-index: 1000;
@@ -212,47 +456,22 @@
             font-size: 14px; resize: none; outline: none; box-sizing: border-box; line-height: 1.5;
         }
         
-        /* Crosshair for Playtest */
         #crosshair {
             position: absolute; top: 50%; left: 50%; width: 8px; height: 8px;
             background-color: white; border: 1px solid black; border-radius: 50%;
             transform: translate(-50%, -50%); pointer-events: none; z-index: 20; display: none;
         }
 
-        /* Context Menu Styles */
         #context-menu {
             position: absolute; display: none; background-color: #2c2c2c; border: 1px solid #444;
             border-radius: 4px; z-index: 10000; width: 150px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
             padding: 4px 0; font-family: sans-serif;
         }
         .context-item {
-            padding: 6px 12px; font-size: 13px; cursor: pointer; color: white;
+            padding: 6px 12px; font-size: 12px; cursor: pointer; color: white;
         }
         .context-item:hover { background-color: #007acc; }
 
-        /* Translucent Escape Menu */
-        #roblox-escape-menu {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            background-color: rgba(15,15,15,0.75); display: none; 
-            justify-content: center; align-items: center; z-index: 100000; font-family: sans-serif;
-        }
-        .menu-box {
-            background-color: rgba(30, 30, 30, 0.95); width: 450px; border-radius: 8px; 
-            border: 1px solid #444; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); 
-            display: flex; flex-direction: column; gap: 15px; align-items: center;
-        }
-        .menu-btn {
-            width: 100%; padding: 12px; color: white; border: none; border-radius: 4px; 
-            cursor: pointer; font-size: 14px; font-weight: bold; outline: none; transition: background-color 0.15s;
-        }
-        #menu-btn-resume { background-color: #3c3c3c; border: 1px solid #555; }
-        #menu-btn-resume:hover { background-color: #4a4a4a; }
-        #menu-btn-reset { background-color: #dc3545; }
-        #menu-btn-reset:hover { background-color: #bd2130; }
-        #menu-btn-leave { background-color: #555; }
-        #menu-btn-leave:hover { background-color: #666; }
-
-        /* Studio Start Hub Styles */
         #studio-hub {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
             display: flex; background-color: #1e1e1e; z-index: 1000000; font-family: sans-serif;
@@ -286,7 +505,7 @@
     <div id="studio-hub">
         <div style="width: 200px; background-color: #202020; border-right: 1px solid #333; display: flex; flex-direction: column; padding: 20px 0; gap: 10px;">
             <div style="font-size: 20px; font-weight: bold; color: white; display: flex; align-items: center; gap: 8px; padding: 0 20px; margin-bottom: 20px;">
-                <span style="background-color: #007acc; color: white; padding: 2px 8px; border-radius: 4px; font-size: 14px; font-weight: 900;">R</span> Studio Hub
+                <span class="studio-logo-badge">R</span> Studio Hub
             </div>
             <div class="hub-tab selected" id="tab-new">New Template</div>
             <div class="hub-tab" id="tab-local">My Local Saves</div>
@@ -300,7 +519,7 @@
                 <div class="template-card" id="card-baseplate">
                     <div style="background-color: #7c8c7c; height: 120px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 32px;">🧱</div>
                     <div style="font-weight: bold; color: white; font-size: 14px;">Classic Baseplate</div>
-                    <div style="color: #aaa; font-size: 12px; margin-top: auto;">Standard flat grass floor with default lighting.</div>
+                    <div style="color: #aaa; font-size: 12px; margin-top: auto;">Standard flat floor with PBR atmosphere & lighting.</div>
                 </div>
             </div>
 
@@ -310,35 +529,52 @@
     </div>
     
     <div id="studio-container" style="display: none;">
+        <!-- Top Studio Place Header Bar -->
+        <div id="studio-header-bar">
+            <span class="studio-logo-badge">R</span>
+            <span id="project-title-display">Untitled Experience - Roblox Studio</span>
+        </div>
+
         <div id="ribbon-menu">
+            <div class="dropdown-container">
+                <div class="ribbon-tab file-tab-btn" id="ribbon-file-btn">File ▼</div>
+                <div id="file-dropdown-menu" class="dropdown-menu" style="top: 100%; left: 0;">
+                    <div class="dropdown-item" id="menu-file-new">📄 New Place</div>
+                    <div class="dropdown-item" id="menu-file-open">📁 Open Place File...</div>
+                    <div class="dropdown-item" id="menu-file-save" style="border-top: 1px solid #333;">💾 Save</div>
+                    <div class="dropdown-item" id="menu-file-save-as">💾 Save As...</div>
+                    <div class="dropdown-item" id="menu-file-publish">☁️ Publish to Cloud</div>
+                    <div class="dropdown-item" id="menu-file-close" style="border-top: 1px solid #333; color: #ff6b6b;">🚪 Close Place</div>
+                </div>
+            </div>
+
             <div class="ribbon-tab selected" id="ribbon-home">Home</div>
             <div class="ribbon-tab" id="ribbon-model">Model</div>
             <div class="ribbon-tab" id="ribbon-view">View</div>
         </div>
 
         <div id="toolbar">
-            <!-- Project saving commands -->
             <div class="toolbar-group">
-                <button id="btn-save" class="tool-btn" style="background-color: #005c99;">💾 Save</button>
-                <button id="btn-publish" class="tool-btn" style="background-color: #4a148c;">☁️ Publish</button>
-                <button id="btn-close-project" class="tool-btn" style="background-color: #444;">🚪 Close</button>
+                <button id="btn-save" class="tool-btn" style="background-color: #005c99;" title="Save Experience">💾 Save</button>
+                <button id="btn-save-as" class="tool-btn" style="background-color: #007acc;" title="Save Experience As...">💾 Save As...</button>
+                <button id="btn-publish" class="tool-btn" style="background-color: #4a148c;" title="Publish to Cloud">☁️ Publish</button>
+                <button id="btn-close-project" class="tool-btn" style="background-color: #444;" title="Close Experience">🚪 Close</button>
             </div>
 
-            <!-- Segmented Play/Stop controls -->
+            <!-- Segmented Play/Pause/Stop controls -->
             <div class="toolbar-group">
                 <button id="btn-play" class="tool-btn" style="color: #28a745;" title="Play Test"><span class="icon">▶</span>Play</button>
                 <button id="btn-pause" class="tool-btn" style="color: #ffc107; display:none;" title="Pause Test"><span class="icon">⏸</span>Pause</button>
                 <button id="btn-stop" class="tool-btn" style="color: #dc3545; display:none;" title="Stop Test"><span class="icon">■</span>Stop</button>
             </div>
             
-            <!-- Standard Edit Tools (Home / Model Tab) -->
             <div class="toolbar-group" id="tools-edit-group">
                 <button id="btn-tool-select" class="tool-btn active">🔍 Select</button>
                 <button id="btn-tool-move" class="tool-btn">✥ Move</button>
                 <button id="btn-tool-scale" class="tool-btn">📐 Scale</button>
                 <button id="btn-tool-rotate" class="tool-btn">⟳ Rotate</button>
                 
-                <div class="snap-input-group" style="margin-left: 10px;">
+                <div class="snap-input-group" style="margin-left: 6px;">
                     <span>Snap:</span>
                     <input type="number" id="input-snap-studs" class="snap-input" value="1.0" step="0.25">
                     <span>Studs</span>
@@ -350,7 +586,6 @@
                 </div>
             </div>
 
-            <!-- Custom Spawner Menu Dropdown -->
             <div class="toolbar-group">
                 <div class="dropdown-container">
                     <button id="btn-part-trigger" class="tool-btn"><span class="icon">🧱</span>Part ▼</button>
@@ -359,81 +594,131 @@
                         <div class="dropdown-item" data-shape="Sphere">Sphere</div>
                         <div class="dropdown-item" data-shape="Cylinder">Cylinder</div>
                         <div class="dropdown-item" data-shape="Wedge">Wedge</div>
+                        <div class="dropdown-item" data-shape="LightBlock">🌟 Light Block</div>
                         <div class="dropdown-item" data-shape="SpawnLocation">Spawn Location</div>
+                        <div class="dropdown-item" data-shape="Terrain" style="border-top: 1px solid #333;">⛰️ Terrain</div>
+                        <div class="dropdown-item" data-shape="Water">🌊 Water</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Upload Custom File Folders & Assets -->
             <div class="toolbar-group">
-                <button id="btn-import-assets" class="tool-btn" style="color: #007acc;"><span class="icon">📥</span>Import</button>
+                <button id="btn-import-assets" class="tool-btn" style="color: #007acc;"><span class="icon">📥</span>Import Folder</button>
                 <button id="btn-tool-script" class="tool-btn"><span class="icon">📜</span>+Script</button>
                 <button id="btn-tool-localscript" class="tool-btn"><span class="icon">💻</span>+LocalScript</button>
             </div>
 
-            <!-- Locking & Anchoring Actions -->
             <div class="toolbar-group">
                 <button id="btn-tool-lock" class="tool-btn"><span class="icon">🔒</span>Lock</button>
                 <button id="btn-tool-anchor" class="tool-btn"><span class="icon">⚓</span>Anchor</button>
             </div>
 
-            <!-- Project File Actions -->
             <div class="toolbar-group">
                 <button id="btn-export-project" class="tool-btn"><span class="icon">💾</span>Export</button>
                 <button id="btn-import-project" class="tool-btn"><span class="icon">📁</span>Import File</button>
             </div>
 
-            <!-- View Toggles (View Tab Only) -->
             <div class="toolbar-group" id="tools-view-group" style="display: none; align-items: center; margin-left: auto;">
                 <button id="btn-toggle-explorer" class="tool-btn active">📁 Explorer</button>
                 <button id="btn-toggle-properties" class="tool-btn active">⚙️ Properties</button>
+                <button id="btn-toggle-viewmodel" class="tool-btn active">📦 View Model</button>
                 <button id="btn-toggle-console" class="tool-btn active">💻 Console</button>
             </div>
         </div>
 
         <div id="workspace-area">
+            <div id="dock-indicator-left" class="dock-indicator"></div>
+            <div id="dock-indicator-right" class="dock-indicator"></div>
+            <div id="dock-indicator-bottom" class="dock-indicator"></div>
+
+            <div id="sidebar-left" class="dock-sidebar" style="display: none; width: 280px;"></div>
+            <div id="splitter-left" class="dock-splitter vertical-splitter" style="display: none;"></div>
+
             <div id="center-viewport">
                 <div id="canvas-container">
                     <div id="crosshair"></div>
                     <div id="gui-viewport"></div>
+
+                    <!-- ROBLOX TOP BAR IN-GAME OVERLAY -->
+                    <div id="roblox-top-bar">
+                        <button id="top-bar-menu-btn" class="top-bar-btn" title="Menu (ESC)">☰</button>
+                        <button id="top-bar-chat-btn" class="top-bar-btn" title="Chat (/)">💬</button>
+                        <button id="top-bar-leaderboard-btn" class="top-bar-btn" title="Players (TAB)">👥</button>
+                    </div>
+
+                    <!-- ROBLOX LEADERBOARD PLAYER LIST -->
+                    <div id="roblox-player-list">
+                        <div class="player-list-header">
+                            <span>Players</span>
+                            <span id="player-count-badge" style="color: #28a745;">1</span>
+                        </div>
+                        <div id="player-list-items"></div>
+                    </div>
+
+                    <!-- ROBLOX IN-GAME CHAT OVERLAY -->
+                    <div id="roblox-chat-container">
+                        <div id="chat-messages"></div>
+                        <div id="chat-input-box">
+                            <input type="text" id="chat-input" placeholder="To chat click here or press '/' key" autocomplete="off" spellcheck="false">
+                        </div>
+                    </div>
                 </div>
 
-                <div id="console-splitter"></div>
+                <div id="console-splitter" class="dock-splitter horizontal-splitter"></div>
 
-                <div id="bottom-panel">
-                    <div style="background-color: #252526; padding: 4px 12px; font-size: 11px; font-weight: bold; border-bottom: 1px solid #1a1a1a; display: flex; justify-content: space-between; align-items: center;">
-                        <span>OUTPUT / CONSOLE</span>
-                        <button id="btn-clear-console" style="background: none; border: none; color: #8a8a8a; cursor: pointer; font-size: 11px;">🗑️ Clear</button>
-                    </div>
-                    <div id="console-output"></div>
-                    <div id="command-bar-container">
-                        <span style="background-color: #252526; display: flex; align-items: center; padding: 0 10px; font-family: monospace; font-size: 13px; border-right: 1px solid #333; color: #007acc; font-weight: bold;">$</span>
-                        <input type="text" id="command-bar" placeholder="Enter Javascript command... (e.g. Instance.new('Part') )" autocomplete="off" spellcheck="false">
+                <div id="bottom-dock-zone">
+                    <div class="panel" id="panel-console" style="height: 160px;">
+                        <div class="panel-header">
+                            <span>OUTPUT / CONSOLE</span>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <button id="btn-clear-console" style="background: none; border: none; color: #8a8a8a; cursor: pointer; font-size: 11px;">🗑️ Clear</button>
+                            </div>
+                        </div>
+                        <div id="console-output"></div>
+                        <div id="command-bar-container">
+                            <span style="background-color: #252526; display: flex; align-items: center; padding: 0 10px; font-family: monospace; font-size: 13px; border-right: 1px solid #333; color: #007acc; font-weight: bold;">$</span>
+                            <input type="text" id="command-bar" placeholder="Enter Javascript command... (e.g. Instance.new('LightBlock') )" autocomplete="off" spellcheck="false">
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div id="sidebar-splitter"></div>
+            <div id="splitter-right" class="dock-splitter vertical-splitter"></div>
 
-            <div id="sidebar">
-                <div class="panel">
-                    <div class="panel-header">Explorer</div>
+            <div id="sidebar-right" class="dock-sidebar" style="width: 300px;">
+                <div class="panel" id="panel-explorer">
+                    <div class="panel-header">
+                        <span>Explorer</span>
+                    </div>
                     <div class="search-container">
                         <input type="text" id="explorer-search" class="search-box" placeholder="Search Workspace..." autocomplete="off">
                     </div>
                     <div id="explorer-tree" class="panel-content"></div>
                 </div>
-                <div class="panel">
-                    <div id="properties-panel-header" class="panel-header">Properties</div>
+
+                <div class="panel" id="panel-viewmodel">
+                    <div class="panel-header">
+                        <span>View Model Assets</span>
+                        <span id="viewmodel-count-badge" style="background-color: #007acc; color: white; padding: 1px 6px; border-radius: 10px; font-size: 9px;">0 Folders</span>
+                    </div>
+                    <div id="viewmodel-container" class="panel-content">
+                        <p style="color: #666; font-size: 11px; text-align: center; margin-top: 20px;">Upload a 3D assets folder via the "Import Folder" button to view and place models here!</p>
+                    </div>
+                </div>
+
+                <div class="panel" id="panel-properties">
+                    <div id="properties-panel-header" class="panel-header">
+                        <span>Properties</span>
+                    </div>
                     <div id="properties-grid" class="panel-content">
-                        <p style="color: #666; font-size: 13px; text-align: center; margin-top: 20px;">Select an item to view properties</p>
+                        <p style="color: #666; font-size: 11px; text-align: center; margin-top: 20px;">Select an item to view properties</p>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Hidden Input selectors for local mesh/texture file uploads -->
+    <!-- Hidden Input selectors -->
     <input type="file" id="local-assets-folder-importer" accept=".glb,.gltf" webkitdirectory directory multiple style="display: none;">
     <input type="file" id="local-project-file-importer" accept=".webxl,.json" style="display: none;">
     <input type="file" id="local-mesh-uploader" accept=".glb,.gltf" style="display: none;">
@@ -448,15 +733,97 @@
         <div class="context-item" id="menu-rename">Rename</div>
     </div>
 
-    <!-- Translucent Escape Menu -->
+    <!-- AUTHENTIC ROBLOX ESCAPE PAUSE MENU -->
     <div id="roblox-escape-menu">
-        <div class="menu-box">
-            <div style="font-size: 22px; font-weight: bold; color: white; display: flex; align-items: center; gap: 8px;">
-                <span style="background-color: #ff3b30; color: white; padding: 2px 8px; border-radius: 4px; font-size: 14px; font-weight: 900;">R</span> Roblox Sandbox Menu
+        <div class="esc-menu-container">
+            <!-- Nav Tabs -->
+            <div class="esc-nav-tabs">
+                <div class="esc-tab-item active" id="esc-tab-people">👥 People</div>
+                <div class="esc-tab-item" id="esc-tab-settings">⚙️ Settings</div>
+                <div class="esc-tab-item" id="esc-tab-help">❓ Help</div>
             </div>
-            <button id="menu-btn-resume" class="menu-btn">Resume Game</button>
-            <button id="menu-btn-reset" class="menu-btn">Reset Character (Die)</button>
-            <button id="menu-btn-leave" class="menu-btn">Leave Game (Stop Test)</button>
+
+            <!-- Body Container -->
+            <div class="esc-menu-body">
+                <!-- PEOPLE TAB -->
+                <div id="esc-view-people">
+                    <div style="display: flex; gap: 12px; margin-bottom: 18px;">
+                        <button class="esc-action-btn esc-btn-resume" style="max-width: 160px; font-size: 12px;" onclick="alert('Friends invitation sent!')">➕ Invite Friends</button>
+                        <button class="esc-action-btn esc-btn-leave" style="max-width: 120px; font-size: 12px;">🔇 Mute All</button>
+                    </div>
+                    <div class="esc-section-title">In this server</div>
+                    <div class="esc-player-cards-grid" id="esc-player-cards-container"></div>
+                </div>
+
+                <!-- SETTINGS TAB -->
+                <div id="esc-view-settings" style="display: none;">
+                    <!-- Audio -->
+                    <div class="esc-section-title">Audio</div>
+                    <div class="esc-setting-row">
+                        <span>Volume</span>
+                        <div class="esc-setting-control">
+                            <input type="range" id="setting-volume" class="esc-input-slider" min="0" max="100" value="80">
+                            <span id="setting-volume-val" style="width: 32px; font-size: 11px; text-align: right;">80%</span>
+                        </div>
+                    </div>
+
+                    <!-- View & Controls -->
+                    <div class="esc-section-title" style="margin-top: 20px;">View & Controls</div>
+                    <div class="esc-setting-row">
+                        <span>Camera Sensitivity</span>
+                        <div class="esc-setting-control">
+                            <input type="range" id="setting-sensitivity" class="esc-input-slider" min="10" max="300" value="100">
+                            <span id="setting-sens-val" style="width: 32px; font-size: 11px; text-align: right;">1.0x</span>
+                        </div>
+                    </div>
+                    <div class="esc-setting-row">
+                        <span>Shift Lock Switch</span>
+                        <button id="setting-shiftlock-toggle" class="esc-toggle-btn on">On</button>
+                    </div>
+                    <div class="esc-setting-row">
+                        <span>Camera Inverted</span>
+                        <button id="setting-camera-inverted" class="esc-toggle-btn">Off</button>
+                    </div>
+
+                    <!-- Graphics & Performance -->
+                    <div class="esc-section-title" style="margin-top: 20px;">Graphics & Performance</div>
+                    <div class="esc-setting-row">
+                        <span>Graphics Quality</span>
+                        <div class="esc-setting-control">
+                            <input type="range" id="setting-graphics-quality" class="esc-input-slider" min="1" max="10" value="8">
+                            <span id="setting-graphics-val" style="width: 32px; font-size: 11px; text-align: right;">8</span>
+                        </div>
+                    </div>
+                    <div class="esc-setting-row">
+                        <span>Maximum Frame Rate</span>
+                        <select id="setting-fps-limit" class="esc-select-box">
+                            <option value="60">Default (60 FPS)</option>
+                            <option value="120">120 FPS</option>
+                            <option value="144">144 FPS</option>
+                            <option value="240">240 FPS</option>
+                            <option value="0">Uncapped</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- HELP TAB -->
+                <div id="esc-view-help" style="display: none;">
+                    <div class="esc-section-title">Controls Reference</div>
+                    <div class="esc-setting-row"><span>Move Forward / Backward</span><span style="color: #28a745; font-weight: bold;">W / S or Up / Down</span></div>
+                    <div class="esc-setting-row"><span>Strafe Left / Right</span><span style="color: #28a745; font-weight: bold;">A / D or Left / Right</span></div>
+                    <div class="esc-setting-row"><span>Jump</span><span style="color: #28a745; font-weight: bold;">Space</span></div>
+                    <div class="esc-setting-row"><span>Toggle Shift Lock</span><span style="color: #28a745; font-weight: bold;">Shift</span></div>
+                    <div class="esc-setting-row"><span>Chat Box</span><span style="color: #28a745; font-weight: bold;">/ (Slash)</span></div>
+                    <div class="esc-setting-row"><span>Pause Menu</span><span style="color: #28a745; font-weight: bold;">Esc</span></div>
+                </div>
+            </div>
+
+            <!-- Bottom Actions Bar -->
+            <div class="esc-bottom-bar">
+                <button id="menu-btn-leave" class="esc-action-btn esc-btn-leave"><span style="background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px; font-size: 11px;">L</span> Leave</button>
+                <button id="menu-btn-reset" class="esc-action-btn esc-btn-reset"><span style="background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px; font-size: 11px;">R</span> Respawn</button>
+                <button id="menu-btn-resume" class="esc-action-btn esc-btn-resume"><span style="background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px; font-size: 11px;">ESC</span> Resume</button>
+            </div>
         </div>
     </div>
 
